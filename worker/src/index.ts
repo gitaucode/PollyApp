@@ -248,6 +248,27 @@ async function vote(env: Env, request: Request, pollId: string) {
     await env.DB.prepare('UPDATE poll_options SET votes_count = votes_count + 1 WHERE id = ?')
       .bind(body.optionId)
       .run();
+
+    // Get poll creator ID to create activity
+    const poll = await env.DB.prepare('SELECT creator_id FROM polls WHERE id = ?')
+      .bind(pollId)
+      .first();
+
+    if (poll) {
+      const activityId = createId('act');
+      await env.DB.prepare(
+        'INSERT INTO activity (id, user_id, type, title, subtitle, unread, created_at) VALUES (?, ?, ?, ?, ?, ?, datetime("now"))',
+      )
+        .bind(
+          activityId,
+          poll.creator_id,
+          'votes',
+          'New vote on your poll',
+          'Someone just voted on your poll',
+          1,
+        )
+        .run();
+    }
   }
 
   const response = await getPoll(env, pollId);
@@ -361,6 +382,17 @@ async function getActivity(env: Env, userId: string) {
   return json({ activity: items });
 }
 
+async function toggleFollow(env: Env, request: Request, creatorId: string) {
+  const body = (await request.json()) as { userId?: string; follow?: boolean };
+  if (!body.userId) {
+    return json({ error: 'userId is required.' }, { status: 400 });
+  }
+
+  // For now, just return success - in a real app you'd have a follows table
+  // This is a placeholder for the follow functionality
+  return json({ following: body.follow ?? true });
+}
+
 export default {
   async fetch(request: Request, env: Env) {
     if (request.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
@@ -370,6 +402,7 @@ export default {
     const pollMatch = path.match(/^\/polls\/([^/]+)$/);
     const voteMatch = path.match(/^\/polls\/([^/]+)\/votes$/);
     const mediaMatch = path.match(/^\/media\/(.+)$/);
+    const followMatch = path.match(/^\/users\/([^/]+)\/follow$/);
 
     try {
       if (request.method === 'GET' && path === '/health') {
@@ -404,6 +437,7 @@ export default {
       if (request.method === 'GET' && userPollsMatch) return getUserPolls(env, userPollsMatch[1]);
       if (request.method === 'GET' && userMatch) return getUser(env, userMatch[1]);
       if (request.method === 'GET' && activityMatch) return getActivity(env, activityMatch[1]);
+      if (request.method === 'POST' && followMatch) return toggleFollow(env, request, followMatch[1]);
       return notFound();
     } catch (error) {
       return json(

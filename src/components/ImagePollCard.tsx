@@ -1,14 +1,15 @@
-import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  Image,
-  TouchableOpacity,
-  StyleSheet,
-  ImageSourcePropType,
-} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { MoreHorizontal, ShieldCheck, MessageCircle, Share2, Sparkles } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
+import { BarChart2, MessageCircle, MoreHorizontal, Share2, ShieldCheck, Sparkles } from 'lucide-react-native';
+import { useState } from 'react';
+import {
+    Image,
+    ImageSourcePropType,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
+} from 'react-native';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface ImagePollOptionData {
@@ -40,6 +41,7 @@ interface ImagePollCardProps {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function ImagePollCard({ poll, onVote }: ImagePollCardProps) {
+  const router = useRouter() as any;
   const [selected, setSelected] = useState<string | null>(null);
   const [isVoting, setIsVoting] = useState(false);
 
@@ -144,7 +146,11 @@ export default function ImagePollCard({ poll, onVote }: ImagePollCardProps) {
 
         {/* ── Engagement row ── */}
         <View style={styles.engagementRow}>
-          <View style={styles.engagementLeft}>
+          <TouchableOpacity
+            style={styles.engagementLeft}
+            onPress={() => router.push({ pathname: '/results', params: { pollId: poll.id } })}
+            activeOpacity={0.7}
+          >
             <View style={styles.stackedAvatars}>
               {[1, 2, 3].map((i) => (
                 <Image
@@ -156,7 +162,8 @@ export default function ImagePollCard({ poll, onVote }: ImagePollCardProps) {
             </View>
             <Text style={styles.voteCountBold}>{poll.votes} </Text>
             <Text style={styles.voteCountLight}>votes</Text>
-          </View>
+            <BarChart2 size={13} color="#7C3AED" strokeWidth={2.2} style={{ marginLeft: 6 }} />
+          </TouchableOpacity>
 
           <View style={styles.engagementRight}>
             <TouchableOpacity style={styles.engagementItem}>

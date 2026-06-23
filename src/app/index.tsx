@@ -1,15 +1,15 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Bell } from 'lucide-react-native';
-import AvatarStory from '../components/AvatarStory';
-import CategoryTabs from '../components/CategoryTabs';
-import PollCard from '../components/PollCard';
-import ImagePollCard from '../components/ImagePollCard';
-import BottomNav from '../components/BottomNav';
 import { UI } from '@/constants/theme';
 import { pollpopApi } from '@/lib/api';
 import { Poll, User } from '@/types/pollpop';
+import { Bell } from 'lucide-react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import AvatarStory from '../components/AvatarStory';
+import BottomNav from '../components/BottomNav';
+import CategoryTabs from '../components/CategoryTabs';
+import ImagePollCard from '../components/ImagePollCard';
+import PollCard from '../components/PollCard';
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -17,6 +17,7 @@ export default function HomeScreen() {
   const [stories, setStories] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState('foryou');
 
   const loadFeed = useCallback(async () => {
     try {
@@ -83,7 +84,7 @@ export default function HomeScreen() {
         </ScrollView>
 
         {/* Category Filter Tabs */}
-        <CategoryTabs />
+        <CategoryTabs activeTab={activeTab} onTabChange={setActiveTab} />
 
         {/* Poll Cards */}
         {loading && <Text style={styles.stateText}>Loading polls...</Text>}

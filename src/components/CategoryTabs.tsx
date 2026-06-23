@@ -9,8 +9,15 @@ const TABS = [
   { id: 'trending', label: 'Trending', icon: 'flame' },
 ];
 
-export default function CategoryTabs() {
-  const [activeTab, setActiveTab] = useState('foryou');
+interface CategoryTabsProps {
+  activeTab?: string;
+  onTabChange?: (tabId: string) => void;
+}
+
+export default function CategoryTabs({ activeTab: controlledTab, onTabChange }: CategoryTabsProps) {
+  const [internalTab, setInternalTab] = useState('foryou');
+  const activeTab = controlledTab ?? internalTab;
+  const setActiveTab = onTabChange ?? setInternalTab;
 
   return (
     <ScrollView

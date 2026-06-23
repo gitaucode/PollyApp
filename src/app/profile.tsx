@@ -1,19 +1,21 @@
+import { UI } from '@/constants/theme';
+import { pollpopApi, UserPollSummary, UserProfile } from '@/lib/api';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Settings, X } from 'lucide-react-native';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  Image,
-  ScrollView,
-  TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
+    ActivityIndicator,
+    Image,
+    Modal,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Settings } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import BottomNav from '../components/BottomNav';
-import { UI } from '@/constants/theme';
-import { pollpopApi, UserProfile, UserPollSummary } from '@/lib/api';
 
 const PURPLE_DARK = UI.color.purpleDark;
 
@@ -99,6 +101,10 @@ export default function ProfileScreen() {
   const [polls, setPolls] = useState<UserPollSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editBio, setEditBio] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
   const loadProfile = useCallback(async () => {
     try {
@@ -115,6 +121,28 @@ export default function ProfileScreen() {
       setLoading(false);
     }
   }, []);
+
+  const openEditModal = useCallback(() => {
+    if (user) {
+      setEditName(user.name);
+      setEditBio(user.bio);
+      setEditModalVisible(true);
+    }
+  }, [user]);
+
+  const handleSaveProfile = async () => {
+    if (!editName.trim()) return;
+    setIsSaving(true);
+    try {
+      // For now, just update local state - backend endpoint would be added later
+      setUser((prev) => prev ? { ...prev, name: editName.trim(), bio: editBio.trim() } : null);
+      setEditModalVisible(false);
+    } catch (err) {
+      console.error('Save failed:', err);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   useEffect(() => { void loadProfile(); }, [loadProfile]);
 
@@ -170,7 +198,7 @@ export default function ProfileScreen() {
                 <View style={styles.statSep} />
                 <StatItem value={user.following} label="Following" />
               </View>
-              <TouchableOpacity style={styles.editBtn} activeOpacity={0.8}>
+              <TouchableOpacity style={styles.editBtn} activeOpacity={0.8} onPress={openEditModal}>
                 <Text style={styles.editBtnText}>Edit profile</Text>
               </TouchableOpacity>
             </View>
@@ -212,7 +240,20 @@ export default function ProfileScreen() {
             </View>
           )}
           {activeTab === 'Results' && (
-            <TabPlaceholder message="Your poll results will appear here after voting closes." />
+            <View style={styles.pollList}>
+              {polls.length === 0 ? (
+                <TabPlaceholder message="No poll results yet. Create polls to see results!" />
+              ) : (
+                <View style={styles.pollGroup}>
+                  {polls.map((poll, idx) => (
+                    <React.Fragment key={poll.id}>
+                      <PollRow poll={poll} />
+                      {idx < polls.length - 1 && <View style={styles.pollDivider} />}
+                    </React.Fragment>
+                  ))}
+                </View>
+              )}
+            </View>
           )}
           {activeTab === 'Saved' && (
             <TabPlaceholder message="Polls you've saved appear here." />
@@ -221,6 +262,69 @@ export default function ProfileScreen() {
       )}
 
       <BottomNav activeTab="profile" />
+
+      {/* Edit Profile Modal */}
+      <Modal
+        visible={editModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setEditModalVisible(false)}
+      >
+        <View style={[styles.modalOverlay, { paddingTop: insets.top }]}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Edit Profile</Text>
+              <TouchableOpacity onPress={() => setEditModalVisible(false)} style={styles.modalClose}>
+                <X size={20} color={UI.color.subtle} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalBody}>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Name</Text>
+                <TextInput
+                  style={styles.input}
+                  value={editName}
+                  onChangeText={setEditName}
+                  placeholder="Your name"
+                  placeholderTextColor="#9CA3AF"
+                  maxLength={30}
+                />
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Bio</Text>
+                <TextInput
+                  style={[styles.input, styles.textArea]}
+                  value={editBio}
+                  onChangeText={setEditBio}
+                  placeholder="Tell us about yourself"
+                  placeholderTextColor="#9CA3AF"
+                  multiline
+                  maxLength={150}
+                  textAlignVertical="top"
+                />
+              </View>
+            </View>
+
+            <View style={styles.modalFooter}>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnCancel]}
+                onPress={() => setEditModalVisible(false)}
+              >
+                <Text style={styles.modalBtnTextCancel}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnSave]}
+                onPress={handleSaveProfile}
+                disabled={isSaving || !editName.trim()}
+              >
+                <Text style={styles.modalBtnTextSave}>{isSaving ? 'Saving...' : 'Save'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -335,5 +439,87 @@ const styles = StyleSheet.create({
   tabPlaceholder: { paddingHorizontal: 32, paddingTop: 52, alignItems: 'center' },
   tabPlaceholderText: {
     fontSize: 14, color: '#9CA3AF', textAlign: 'center', lineHeight: 21, fontWeight: '400',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 20,
+    paddingHorizontal: 20,
+    paddingBottom: 30,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  modalClose: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalBody: {
+    marginBottom: 20,
+  },
+  inputGroup: {
+    marginBottom: 16,
+  },
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 8,
+  },
+  input: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: '#111827',
+  },
+  textArea: {
+    minHeight: 80,
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  modalBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalBtnCancel: {
+    backgroundColor: '#F3F4F6',
+  },
+  modalBtnSave: {
+    backgroundColor: '#7C3AED',
+  },
+  modalBtnTextCancel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  modalBtnTextSave: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });

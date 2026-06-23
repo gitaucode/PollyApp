@@ -1,6 +1,6 @@
 import { Poll, PollFeedResponse } from '@/types/pollpop';
 
-const API_URL = (process.env.EXPO_PUBLIC_API_URL || 'http://127.0.0.1:8787').replace(/\/$/, '');
+const API_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://pollpop-api.stephen-gitau.workers.dev').replace(/\/$/, '');
 const voterKey = `anon-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
 
 class ApiError extends Error {
@@ -112,5 +112,13 @@ export const pollpopApi = {
   getActivity: async (userId: string) => {
     const response = await request<{ activity: ActivityItem[] }>(`/activity/${userId}`);
     return response.activity;
+  },
+
+  toggleFollow: async (creatorId: string, userId: string, follow: boolean) => {
+    const response = await request<{ following: boolean }>(`/users/${creatorId}/follow`, {
+      method: 'POST',
+      body: JSON.stringify({ userId, follow }),
+    });
+    return response.following;
   },
 };

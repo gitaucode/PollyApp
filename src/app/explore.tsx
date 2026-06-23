@@ -1,12 +1,12 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Image, TextInput } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Search, BarChart2, ChevronRight, Flame, Heart, Sparkles, Users, WalletCards } from 'lucide-react-native';
-import BottomNav from '../components/BottomNav';
 import { UI } from '@/constants/theme';
 import { pollpopApi } from '@/lib/api';
 import { CreatorSummary, Poll } from '@/types/pollpop';
+import { LinearGradient } from 'expo-linear-gradient';
+import { BarChart2, ChevronRight, Flame, Heart, Search, Sparkles, Users, WalletCards } from 'lucide-react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import BottomNav from '../components/BottomNav';
 
 const CATEGORIES = [
   { id: 'dating', label: 'Dating', icon: Heart, tint: '#F5F0FF', border: '#DDD6FE', accent: UI.color.purpleDark },
@@ -41,8 +41,13 @@ function SectionHeader({ title, action }: { title: string; action?: string }) {
 }
 
 function TrendingCard({ item, isLast }: { item: Poll; isLast: boolean }) {
+  const router = useRouter() as any;
   return (
-    <TouchableOpacity activeOpacity={0.78} style={[styles.trendingRow, !isLast && styles.trendingBorder]}>
+    <TouchableOpacity
+      activeOpacity={0.78}
+      style={[styles.trendingRow, !isLast && styles.trendingBorder]}
+      onPress={() => router.push({ pathname: '/results', params: { pollId: item.id } })}
+    >
       <View style={styles.trendingBody}>
         <View style={styles.authorRow}>
           <Image source={{ uri: item.creator.avatar }} style={styles.smallAvatar} />
@@ -65,6 +70,21 @@ function TrendingCard({ item, isLast }: { item: Poll; isLast: boolean }) {
 
 function CreatorCard({ creator }: { creator: CreatorSummary }) {
   const [following, setFollowing] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  const handleFollow = async () => {
+    if (isUpdating) return;
+    setIsUpdating(true);
+    try {
+      const newFollowing = !following;
+      await pollpopApi.toggleFollow(creator.id, 'u0', newFollowing);
+      setFollowing(newFollowing);
+    } catch (err) {
+      console.error('Follow failed:', err);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
 
   return (
     <View style={styles.creatorCard}>
@@ -76,8 +96,8 @@ function CreatorCard({ creator }: { creator: CreatorSummary }) {
       <Text style={styles.creatorName} numberOfLines={1}>{creator.name}</Text>
       <Text style={styles.creatorHandle} numberOfLines={1}>{creator.handle}</Text>
       <Text style={styles.creatorPolls}>{creator.polls} polls</Text>
-      <TouchableOpacity onPress={() => setFollowing((value) => !value)} activeOpacity={0.8} style={[styles.followButton, following && styles.followingButton]}>
-        <Text style={[styles.followText, following && styles.followingText]}>{following ? 'Following' : 'Follow'}</Text>
+      <TouchableOpacity onPress={handleFollow} activeOpacity={0.8} disabled={isUpdating} style={[styles.followButton, following && styles.followingButton]}>
+        <Text style={[styles.followText, following && styles.followingText]}>{isUpdating ? '...' : (following ? 'Following' : 'Follow')}</Text>
       </TouchableOpacity>
     </View>
   );
