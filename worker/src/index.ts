@@ -1,14 +1,25 @@
+import {
+  getBearerToken,
+  hashPassword,
+  isValidEmail,
+  signToken,
+  verifyPassword,
+  verifyToken,
+  type AuthUser,
+} from './auth';
+
 export interface Env {
   DB: D1Database;
   MEDIA: R2Bucket;
   PUBLIC_MEDIA_BASE_URL?: string;
+  JWT_SECRET: string;
 }
 
 type JsonValue = Record<string, unknown> | unknown[];
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+  'Access-Control-Allow-Methods': 'GET,POST,PATCH,OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type,Authorization',
 };
 
@@ -24,8 +35,142 @@ const json = (body: JsonValue, init: ResponseInit = {}) =>
 
 const notFound = () => json({ error: 'Not found' }, { status: 404 });
 
+const unauthorized = (message = 'Unauthorized') => json({ error: message }, { status: 401 });
+
 const createId = (prefix: string) =>
   `${prefix}_${crypto.randomUUID().replaceAll('-', '').slice(0, 18)}`;
+
+async function requireAuth(request: Request, env: Env): Promise<AuthUser | Response> {
+  const token = getBearerToken(request);
+  if (!token) return unauthorized();
+
+  try {
+    return await verifyToken(token, env.JWT_SECRET);
+  } catch {
+    return unauthorized('Invalid or expired token');
+  }
+}
+
+function uniqueHandleFromEmail(email: string) {
+  const local = email.split('@')[0]?.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12) || 'user';
+  const suffix = crypto.randomUUID().replaceAll('-', '').slice(0, 4);
+  return `@${local}_${suffix}`;
+}
+
+async function buildAuthResponse(env: Env, userId: string, email: string) {
+  const user = await env.DB.prepare(
+    `SELECT u.id, u.name, u.handle, u.avatar_url AS avatar, u.bio,
+            u.is_creator AS isCreator, u.has_story AS hasStory,
+            COUNT(p.id) AS pollCount
+     FROM users u
+     LEFT JOIN polls p ON p.creator_id = u.id
+     WHERE u.id = ?
+     GROUP BY u.id`,
+  )
+    .bind(userId)
+    .first();
+
+  if (!user) return notFound();
+
+  const counts = await env.DB.prepare(
+    `SELECT
+      (SELECT COUNT(*) FROM follows WHERE following_id = ?) AS followers,
+      (SELECT COUNT(*) FROM follows WHERE follower_id = ?) AS following`,
+  )
+    .bind(userId, userId)
+    .first();
+
+  const token = await signToken(userId, email, env.JWT_SECRET);
+
+  return json({
+    token,
+    user: {
+      id: user.id,
+      email,
+      name: user.name,
+      handle: user.handle,
+      avatar: user.avatar,
+      bio: user.bio || '',
+      isCreator: Boolean(user.isCreator),
+      hasStory: Boolean(user.hasStory),
+      polls: Number(user.pollCount),
+      followers: Number(counts?.followers ?? 0),
+      following: Number(counts?.following ?? 0),
+    },
+  });
+}
+
+async function registerAccount(env: Env, request: Request) {
+  const body = (await request.json()) as { email?: string; password?: string; name?: string };
+  const email = body.email?.trim().toLowerCase() ?? '';
+  const password = body.password ?? '';
+  const name = body.name?.trim() ?? '';
+
+  if (!isValidEmail(email)) {
+    return json({ error: 'Enter a valid email address.' }, { status: 400 });
+  }
+  if (password.length < 8) {
+    return json({ error: 'Password must be at least 8 characters.' }, { status: 400 });
+  }
+  if (!name || name.length > 30) {
+    return json({ error: 'Name must be 1-30 characters.' }, { status: 400 });
+  }
+
+  const existing = await env.DB.prepare('SELECT id FROM auth_accounts WHERE email = ?').bind(email).first();
+  if (existing) {
+    return json({ error: 'An account with this email already exists.' }, { status: 409 });
+  }
+
+  const userId = createId('u');
+  const authId = createId('auth');
+  const handle = uniqueHandleFromEmail(email);
+  const avatar = `https://i.pravatar.cc/150?u=${encodeURIComponent(email)}`;
+  const passwordHash = await hashPassword(password);
+
+  await env.DB.batch([
+    env.DB.prepare(
+      'INSERT INTO users (id, name, handle, avatar_url, bio, is_creator, has_story) VALUES (?, ?, ?, ?, ?, 0, 0)',
+    ).bind(userId, name, handle, avatar, ''),
+    env.DB.prepare(
+      'INSERT INTO auth_accounts (id, user_id, email, password_hash) VALUES (?, ?, ?, ?)',
+    ).bind(authId, userId, email, passwordHash),
+  ]);
+
+  return buildAuthResponse(env, userId, email);
+}
+
+async function loginAccount(env: Env, request: Request) {
+  const body = (await request.json()) as { email?: string; password?: string };
+  const email = body.email?.trim().toLowerCase() ?? '';
+  const password = body.password ?? '';
+
+  if (!isValidEmail(email) || !password) {
+    return json({ error: 'Email and password are required.' }, { status: 400 });
+  }
+
+  const account = await env.DB.prepare(
+    'SELECT user_id, password_hash FROM auth_accounts WHERE email = ?',
+  )
+    .bind(email)
+    .first();
+
+  if (!account) {
+    return json({ error: 'Invalid email or password.' }, { status: 401 });
+  }
+
+  const valid = await verifyPassword(password, String(account.password_hash));
+  if (!valid) {
+    return json({ error: 'Invalid email or password.' }, { status: 401 });
+  }
+
+  return buildAuthResponse(env, String(account.user_id), email);
+}
+
+async function getAuthMe(env: Env, request: Request) {
+  const auth = await requireAuth(request, env);
+  if (auth instanceof Response) return auth;
+  return buildAuthResponse(env, auth.userId, auth.email);
+}
 
 const timeAgo = (createdAt: string) => {
   const created = Date.parse(`${createdAt.replace(' ', 'T')}Z`);
@@ -41,17 +186,31 @@ async function getPolls(env: Env, request: Request) {
   const url = new URL(request.url);
   const category = url.searchParams.get('category');
   const search = url.searchParams.get('search')?.trim();
+  const mode = url.searchParams.get('mode');
+  const viewerId = url.searchParams.get('userId');
   const limit = Math.min(Number(url.searchParams.get('limit') ?? 20), 50);
 
   const where: string[] = [];
   const binds: unknown[] = [];
   if (category && category !== 'all') {
-    where.push('p.category = ?');
-    binds.push(category);
+    if (category === 'hot-takes') {
+      where.push('(p.category = ? OR p.category = ?)');
+      binds.push('hot-takes', 'hot-take');
+    } else {
+      where.push('p.category = ?');
+      binds.push(category);
+    }
   }
   if (search) {
     where.push('(p.question LIKE ? OR u.name LIKE ? OR u.handle LIKE ?)');
     binds.push(`%${search}%`, `%${search}%`, `%${search}%`);
+  }
+  if (mode === 'following') {
+    if (!viewerId) {
+      return json({ error: 'userId is required for following feed.' }, { status: 400 });
+    }
+    where.push('p.creator_id IN (SELECT following_id FROM follows WHERE follower_id = ?)');
+    binds.push(viewerId);
   }
 
   const pollRows = await env.DB.prepare(
@@ -131,10 +290,24 @@ async function getPolls(env: Env, request: Request) {
     `,
   ).all();
 
-  return json({ polls, stories: stories.results, creators: creators.results });
+  let creatorResults = creators.results;
+  if (viewerId) {
+    const followRows = await env.DB.prepare(
+      'SELECT following_id FROM follows WHERE follower_id = ?',
+    )
+      .bind(viewerId)
+      .all();
+    const followingSet = new Set(followRows.results.map((row) => String(row.following_id)));
+    creatorResults = creatorResults.map((creator) => ({
+      ...creator,
+      isFollowing: followingSet.has(String(creator.id)),
+    }));
+  }
+
+  return json({ polls, stories: stories.results, creators: creatorResults });
 }
 
-async function getPoll(env: Env, id: string) {
+async function getPoll(env: Env, id: string, request?: Request) {
   const row = await env.DB.prepare(
     `
     SELECT
@@ -161,6 +334,25 @@ async function getPoll(env: Env, id: string) {
     .all();
 
   const totalVotes = Number(row.votes_count);
+
+  let isSaved = false;
+  if (request) {
+    const token = getBearerToken(request);
+    if (token) {
+      try {
+        const auth = await verifyToken(token, env.JWT_SECRET);
+        const savedRow = await env.DB.prepare(
+          'SELECT 1 FROM saved_polls WHERE user_id = ? AND poll_id = ?',
+        )
+          .bind(auth.userId, id)
+          .first();
+        isSaved = Boolean(savedRow);
+      } catch {
+        // ignore invalid tokens for public poll reads
+      }
+    }
+  }
+
   return json({
     poll: {
       id: row.id,
@@ -171,6 +363,7 @@ async function getPoll(env: Env, id: string) {
       votes: totalVotes,
       comments: Number(row.comments_count),
       shares: Number(row.shares_count),
+      isSaved,
       creator: {
         id: row.creator_id,
         name: row.creator_name,
@@ -187,6 +380,9 @@ async function getPoll(env: Env, id: string) {
 }
 
 async function createPoll(env: Env, request: Request) {
+  const auth = await requireAuth(request, env);
+  if (auth instanceof Response) return auth;
+
   const body = (await request.json()) as {
     question?: string;
     category?: string;
@@ -210,7 +406,7 @@ async function createPoll(env: Env, request: Request) {
   }
 
   const pollId = createId('poll');
-  const creatorId = body.creatorId || 'u0';
+  const creatorId = auth.userId;
 
   await env.DB.batch([
     env.DB.prepare(
@@ -223,14 +419,19 @@ async function createPoll(env: Env, request: Request) {
     ),
   ]);
 
-  return getPoll(env, pollId);
+  return getPoll(env, pollId, request);
 }
 
 async function vote(env: Env, request: Request, pollId: string) {
+  const auth = await requireAuth(request, env);
+  if (auth instanceof Response) return auth;
+
   const body = (await request.json()) as { optionId?: string; voterKey?: string };
-  if (!body.optionId || !body.voterKey) {
-    return json({ error: 'optionId and voterKey are required.' }, { status: 400 });
+  if (!body.optionId) {
+    return json({ error: 'optionId is required.' }, { status: 400 });
   }
+
+  const voterKey = `user:${auth.userId}`;
 
   const option = await env.DB.prepare('SELECT id FROM poll_options WHERE id = ? AND poll_id = ?')
     .bind(body.optionId, pollId)
@@ -241,7 +442,7 @@ async function vote(env: Env, request: Request, pollId: string) {
   const inserted = await env.DB.prepare(
     'INSERT OR IGNORE INTO votes (id, poll_id, option_id, voter_key) VALUES (?, ?, ?, ?)',
   )
-    .bind(voteId, pollId, body.optionId, body.voterKey)
+    .bind(voteId, pollId, body.optionId, voterKey)
     .run();
 
   if (inserted.meta.changes > 0) {
@@ -257,11 +458,12 @@ async function vote(env: Env, request: Request, pollId: string) {
     if (poll) {
       const activityId = createId('act');
       await env.DB.prepare(
-        'INSERT INTO activity (id, user_id, type, title, subtitle, unread, created_at) VALUES (?, ?, ?, ?, ?, ?, datetime("now"))',
+        'INSERT INTO activity (id, user_id, poll_id, type, title, subtitle, unread, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime("now"))',
       )
         .bind(
           activityId,
           poll.creator_id,
+          pollId,
           'votes',
           'New vote on your poll',
           'Someone just voted on your poll',
@@ -271,12 +473,15 @@ async function vote(env: Env, request: Request, pollId: string) {
     }
   }
 
-  const response = await getPoll(env, pollId);
+  const response = await getPoll(env, pollId, request);
   const payload = (await response.json()) as Record<string, unknown>;
   return json({ ...payload, accepted: inserted.meta.changes > 0 });
 }
 
 async function uploadMedia(env: Env, request: Request) {
+  const auth = await requireAuth(request, env);
+  if (auth instanceof Response) return auth;
+
   const body = (await request.json()) as { filename?: string; contentType?: string; base64?: string };
   if (!body.base64 || !body.contentType) {
     return json({ error: 'base64 and contentType are required.' }, { status: 400 });
@@ -306,7 +511,7 @@ async function getMedia(env: Env, key: string) {
   });
 }
 
-async function getUser(env: Env, id: string) {
+async function getUser(env: Env, request: Request, id: string) {
   const user = await env.DB.prepare(
     `SELECT u.id, u.name, u.handle, u.avatar_url AS avatar, u.bio,
             u.is_creator AS isCreator, u.has_story AS hasStory,
@@ -319,6 +524,33 @@ async function getUser(env: Env, id: string) {
     .bind(id)
     .first();
   if (!user) return notFound();
+
+  const counts = await env.DB.prepare(
+    `SELECT
+      (SELECT COUNT(*) FROM follows WHERE following_id = ?) AS followers,
+      (SELECT COUNT(*) FROM follows WHERE follower_id = ?) AS following`,
+  )
+    .bind(id, id)
+    .first();
+
+  let isFollowing = false;
+  const token = getBearerToken(request);
+  if (token) {
+    try {
+      const auth = await verifyToken(token, env.JWT_SECRET);
+      if (auth.userId !== id) {
+        const followRow = await env.DB.prepare(
+          'SELECT 1 FROM follows WHERE follower_id = ? AND following_id = ?',
+        )
+          .bind(auth.userId, id)
+          .first();
+        isFollowing = Boolean(followRow);
+      }
+    } catch {
+      // ignore invalid tokens for public profile reads
+    }
+  }
+
   return json({
     user: {
       id: user.id,
@@ -329,9 +561,9 @@ async function getUser(env: Env, id: string) {
       isCreator: Boolean(user.isCreator),
       hasStory: Boolean(user.hasStory),
       polls: Number(user.pollCount),
-      // followers/following not yet tracked — return 0 for now
-      followers: 0,
-      following: 0,
+      followers: Number(counts?.followers ?? 0),
+      following: Number(counts?.following ?? 0),
+      isFollowing,
     },
   });
 }
@@ -360,9 +592,13 @@ async function getUserPolls(env: Env, userId: string) {
   return json({ polls });
 }
 
-async function getActivity(env: Env, userId: string) {
+async function getActivity(env: Env, request: Request, userId: string) {
+  const auth = await requireAuth(request, env);
+  if (auth instanceof Response) return auth;
+  if (auth.userId !== userId) return unauthorized();
+
   const rows = await env.DB.prepare(
-    `SELECT id, type, title, subtitle, unread, created_at
+    `SELECT id, type, title, subtitle, unread, created_at, poll_id AS pollId
      FROM activity
      WHERE user_id = ?
      ORDER BY created_at DESC
@@ -378,22 +614,116 @@ async function getActivity(env: Env, userId: string) {
     subtitle: row.subtitle,
     unread: Boolean(row.unread),
     timeAgo: timeAgo(String(row.created_at)),
+    pollId: row.pollId ? String(row.pollId) : null,
   }));
   return json({ activity: items });
 }
 
-async function toggleFollow(env: Env, request: Request, creatorId: string) {
-  const body = (await request.json()) as { userId?: string; follow?: boolean };
-  if (!body.userId) {
-    return json({ error: 'userId is required.' }, { status: 400 });
+async function registerDevice(env: Env, request: Request) {
+  const body = (await request.json()) as { deviceId?: string };
+  const deviceId = body.deviceId?.trim();
+  if (!deviceId || deviceId.length > 128) {
+    return json({ error: 'deviceId is required.' }, { status: 400 });
   }
 
-  // For now, just return success - in a real app you'd have a follows table
-  // This is a placeholder for the follow functionality
-  return json({ following: body.follow ?? true });
+  const existing = await env.DB.prepare('SELECT user_id FROM device_sessions WHERE device_id = ?')
+    .bind(deviceId)
+    .first();
+
+  if (existing) {
+    return json({ userId: String(existing.user_id), isNew: false });
+  }
+
+  const userId = createId('u');
+  const suffix = deviceId.replace(/[^a-zA-Z0-9]/g, '').slice(-8) || userId.slice(-8);
+  const handle = `@user_${suffix}`;
+  const avatar = `https://i.pravatar.cc/150?u=${encodeURIComponent(deviceId)}`;
+
+  await env.DB.batch([
+    env.DB.prepare(
+      'INSERT INTO users (id, name, handle, avatar_url, bio, is_creator, has_story) VALUES (?, ?, ?, ?, ?, 0, 0)',
+    ).bind(userId, 'New voter', handle, avatar, ''),
+    env.DB.prepare('INSERT INTO device_sessions (device_id, user_id) VALUES (?, ?)').bind(deviceId, userId),
+  ]);
+
+  return json({ userId, isNew: true });
+}
+
+async function toggleFollow(env: Env, request: Request, creatorId: string) {
+  const auth = await requireAuth(request, env);
+  if (auth instanceof Response) return auth;
+
+  const body = (await request.json()) as { follow?: boolean };
+  const userId = auth.userId;
+  if (userId === creatorId) {
+    return json({ error: 'You cannot follow yourself.' }, { status: 400 });
+  }
+
+  const creator = await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(creatorId).first();
+  if (!creator) return json({ error: 'Creator not found.' }, { status: 404 });
+
+  const shouldFollow = body.follow !== false;
+
+  if (shouldFollow) {
+    const inserted = await env.DB.prepare(
+      'INSERT OR IGNORE INTO follows (follower_id, following_id) VALUES (?, ?)',
+    )
+      .bind(userId, creatorId)
+      .run();
+
+    if (inserted.meta.changes > 0) {
+      const follower = await env.DB.prepare('SELECT name FROM users WHERE id = ?')
+        .bind(userId)
+        .first();
+      const activityId = createId('act');
+      await env.DB.prepare(
+        'INSERT INTO activity (id, user_id, type, title, subtitle, unread, created_at) VALUES (?, ?, ?, ?, ?, ?, datetime("now"))',
+      )
+        .bind(
+          activityId,
+          creatorId,
+          'follower',
+          'New follower',
+          `${follower?.name ?? 'Someone'} started following you`,
+          1,
+        )
+        .run();
+    }
+    return json({ following: true });
+  }
+
+  await env.DB.prepare('DELETE FROM follows WHERE follower_id = ? AND following_id = ?')
+    .bind(userId, creatorId)
+    .run();
+
+  return json({ following: false });
+}
+
+async function markActivityRead(env: Env, request: Request, userId: string) {
+  const auth = await requireAuth(request, env);
+  if (auth instanceof Response) return auth;
+  if (auth.userId !== userId) return unauthorized();
+
+  const body = (await request.json()) as { markAll?: boolean; activityId?: string };
+
+  if (body.markAll) {
+    await env.DB.prepare('UPDATE activity SET unread = 0 WHERE user_id = ?').bind(userId).run();
+  } else if (body.activityId) {
+    await env.DB.prepare('UPDATE activity SET unread = 0 WHERE id = ? AND user_id = ?')
+      .bind(body.activityId, userId)
+      .run();
+  } else {
+    return json({ error: 'markAll or activityId is required.' }, { status: 400 });
+  }
+
+  return json({ success: true });
 }
 
 async function updateUser(env: Env, request: Request, userId: string) {
+  const auth = await requireAuth(request, env);
+  if (auth instanceof Response) return auth;
+  if (auth.userId !== userId) return unauthorized();
+
   const body = (await request.json()) as { name?: string; bio?: string };
   if (!body.name) {
     return json({ error: 'name is required.' }, { status: 400 });
@@ -412,6 +742,156 @@ async function updateUser(env: Env, request: Request, userId: string) {
   return json({ success: true, name: body.name, bio: body.bio || '' });
 }
 
+async function toggleSavePoll(env: Env, request: Request, pollId: string) {
+  const auth = await requireAuth(request, env);
+  if (auth instanceof Response) return auth;
+
+  const body = (await request.json()) as { save?: boolean };
+  const poll = await env.DB.prepare('SELECT id FROM polls WHERE id = ?').bind(pollId).first();
+  if (!poll) return json({ error: 'Poll not found.' }, { status: 404 });
+
+  const shouldSave = body.save !== false;
+
+  if (shouldSave) {
+    await env.DB.prepare(
+      'INSERT OR IGNORE INTO saved_polls (user_id, poll_id) VALUES (?, ?)',
+    )
+      .bind(auth.userId, pollId)
+      .run();
+    return json({ saved: true });
+  }
+
+  await env.DB.prepare('DELETE FROM saved_polls WHERE user_id = ? AND poll_id = ?')
+    .bind(auth.userId, pollId)
+    .run();
+  return json({ saved: false });
+}
+
+async function getSavedPolls(env: Env, request: Request, userId: string) {
+  const auth = await requireAuth(request, env);
+  if (auth instanceof Response) return auth;
+  if (auth.userId !== userId) return unauthorized();
+
+  const pollRows = await env.DB.prepare(
+    `SELECT p.id, p.question, p.category, sp.created_at,
+            COALESCE(SUM(o.votes_count), 0) AS votes_count
+     FROM saved_polls sp
+     JOIN polls p ON p.id = sp.poll_id
+     LEFT JOIN poll_options o ON o.poll_id = p.id
+     WHERE sp.user_id = ?
+     GROUP BY p.id
+     ORDER BY sp.created_at DESC
+     LIMIT 50`,
+  )
+    .bind(userId)
+    .all();
+
+  const polls = pollRows.results.map((row) => ({
+    id: row.id,
+    question: row.question,
+    category: row.category,
+    timeAgo: timeAgo(String(row.created_at)),
+    votes: Number(row.votes_count),
+  }));
+  return json({ polls });
+}
+
+async function getComments(env: Env, pollId: string) {
+  const poll = await env.DB.prepare('SELECT id FROM polls WHERE id = ?').bind(pollId).first();
+  if (!poll) return json({ error: 'Poll not found.' }, { status: 404 });
+
+  const rows = await env.DB.prepare(
+    `SELECT c.id, c.body, c.created_at,
+            u.id AS author_id, u.name AS author_name, u.handle AS author_handle,
+            u.avatar_url AS author_avatar
+     FROM comments c
+     JOIN users u ON u.id = c.user_id
+     WHERE c.poll_id = ?
+     ORDER BY c.created_at ASC
+     LIMIT 100`,
+  )
+    .bind(pollId)
+    .all();
+
+  const comments = rows.results.map((row) => ({
+    id: row.id,
+    body: row.body,
+    timeAgo: timeAgo(String(row.created_at)),
+    author: {
+      id: row.author_id,
+      name: row.author_name,
+      handle: row.author_handle,
+      avatar: row.author_avatar,
+    },
+  }));
+
+  return json({ comments });
+}
+
+async function addComment(env: Env, request: Request, pollId: string) {
+  const auth = await requireAuth(request, env);
+  if (auth instanceof Response) return auth;
+
+  const poll = await env.DB.prepare('SELECT id, creator_id, question FROM polls WHERE id = ?')
+    .bind(pollId)
+    .first();
+  if (!poll) return json({ error: 'Poll not found.' }, { status: 404 });
+
+  const body = (await request.json()) as { body?: string };
+  const text = body.body?.trim() ?? '';
+  if (!text || text.length > 500) {
+    return json({ error: 'Comment must be 1-500 characters.' }, { status: 400 });
+  }
+
+  const commentId = createId('cmt');
+  const author = await env.DB.prepare(
+    'SELECT id, name, handle, avatar_url AS avatar FROM users WHERE id = ?',
+  )
+    .bind(auth.userId)
+    .first();
+
+  if (!author) return notFound();
+
+  await env.DB.batch([
+    env.DB.prepare(
+      'INSERT INTO comments (id, poll_id, user_id, body) VALUES (?, ?, ?, ?)',
+    ).bind(commentId, pollId, auth.userId, text),
+    env.DB.prepare('UPDATE polls SET comments_count = comments_count + 1 WHERE id = ?').bind(pollId),
+  ]);
+
+  if (String(poll.creator_id) !== auth.userId) {
+    const activityId = createId('act');
+    const preview = text.length > 60 ? `${text.slice(0, 60)}…` : text;
+    await env.DB.prepare(
+      'INSERT INTO activity (id, user_id, poll_id, type, title, subtitle, unread, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime("now"))',
+    )
+      .bind(
+        activityId,
+        poll.creator_id,
+        pollId,
+        'comment',
+        'New comment on your poll',
+        preview,
+        1,
+      )
+      .run();
+  }
+
+  return json({
+    comment: {
+      id: commentId,
+      body: text,
+      timeAgo: 'just now',
+      author: {
+        id: author.id,
+        name: author.name,
+        handle: author.handle,
+        avatar: author.avatar,
+      },
+    },
+  });
+}
+
 export default {
   async fetch(request: Request, env: Env) {
     if (request.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
@@ -420,6 +900,8 @@ export default {
     const path = url.pathname.replace(/\/+$/, '') || '/';
     const pollMatch = path.match(/^\/polls\/([^/]+)$/);
     const voteMatch = path.match(/^\/polls\/([^/]+)\/votes$/);
+    const commentsMatch = path.match(/^\/polls\/([^/]+)\/comments$/);
+    const saveMatch = path.match(/^\/polls\/([^/]+)\/save$/);
     const mediaMatch = path.match(/^\/media\/(.+)$/);
     const followMatch = path.match(/^\/users\/([^/]+)\/follow$/);
     const updateUserMatch = path.match(/^\/users\/([^/]+)$/);
@@ -444,20 +926,30 @@ export default {
         health.ok = health.db === 'ok' && health.r2 === 'ok';
         return json(health, { status: health.ok ? 200 : 503 });
       }
+      if (request.method === 'POST' && path === '/auth/register') return registerAccount(env, request);
+      if (request.method === 'POST' && path === '/auth/login') return loginAccount(env, request);
+      if (request.method === 'GET' && path === '/auth/me') return getAuthMe(env, request);
+      if (request.method === 'POST' && path === '/auth/device') return registerDevice(env, request);
       if (request.method === 'GET' && path === '/polls') return getPolls(env, request);
       if (request.method === 'POST' && path === '/polls') return createPoll(env, request);
-      if (request.method === 'GET' && pollMatch) return getPoll(env, pollMatch[1]);
+      if (request.method === 'GET' && pollMatch) return getPoll(env, pollMatch[1], request);
+      if (request.method === 'GET' && commentsMatch) return getComments(env, commentsMatch[1]);
+      if (request.method === 'POST' && commentsMatch) return addComment(env, request, commentsMatch[1]);
       if (request.method === 'POST' && voteMatch) return vote(env, request, voteMatch[1]);
+      if (request.method === 'POST' && saveMatch) return toggleSavePoll(env, request, saveMatch[1]);
       if (request.method === 'POST' && path === '/uploads') return uploadMedia(env, request);
       if (request.method === 'GET' && mediaMatch) return getMedia(env, mediaMatch[1]);
       // User endpoints
       const userPollsMatch = path.match(/^\/users\/([^/]+)\/polls$/);
+      const savedPollsMatch = path.match(/^\/users\/([^/]+)\/saved$/);
       const userMatch = path.match(/^\/users\/([^/]+)$/);
       const activityMatch = path.match(/^\/activity\/([^/]+)$/);
       if (request.method === 'GET' && userPollsMatch) return getUserPolls(env, userPollsMatch[1]);
-      if (request.method === 'GET' && userMatch) return getUser(env, userMatch[1]);
+      if (request.method === 'GET' && savedPollsMatch) return getSavedPolls(env, request, savedPollsMatch[1]);
+      if (request.method === 'GET' && userMatch) return getUser(env, request, userMatch[1]);
       if (request.method === 'PATCH' && updateUserMatch) return updateUser(env, request, updateUserMatch[1]);
-      if (request.method === 'GET' && activityMatch) return getActivity(env, activityMatch[1]);
+      if (request.method === 'GET' && activityMatch) return getActivity(env, request, activityMatch[1]);
+      if (request.method === 'PATCH' && activityMatch) return markActivityRead(env, request, activityMatch[1]);
       if (request.method === 'POST' && followMatch) return toggleFollow(env, request, followMatch[1]);
       return notFound();
     } catch (error) {

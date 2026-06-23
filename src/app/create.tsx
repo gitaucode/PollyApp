@@ -18,20 +18,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Send, Image as ImageIcon, X } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { POLL_CATEGORIES } from '@/constants/categories';
 import { UI } from '@/constants/theme';
 import { pollpopApi } from '@/lib/api';
 
 // ─────────────────────────────────────────────────────────────────────────────
 const PURPLE = UI.color.purpleDark;
 const PURPLE_BTN = UI.color.purple;
-
-const CATEGORIES = [
-  { id: 'spicy',      label: 'Spicy',      emoji: '🌶️' },
-  { id: 'dating',     label: 'Dating',     emoji: '💜' },
-  { id: 'friendship', label: 'Friendship', emoji: '🤝' },
-  { id: 'hot-take',   label: 'Hot Take',   emoji: '🔥' },
-  { id: 'random',     label: 'Random',     emoji: '😎' },
-];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -436,7 +429,7 @@ export default function CreatePollScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Pick a category</Text>
           <View style={styles.categoryPills}>
-            {CATEGORIES.map((cat) => {
+            {POLL_CATEGORIES.map((cat) => {
               const selected = cat.id === category;
               return (
                 <TouchableOpacity

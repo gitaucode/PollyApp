@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Home, Search, Plus, Bell, User } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { UI } from '@/constants/theme';
+import { useUnreadActivityCount } from '@/hooks/use-unread-activity';
 
 type NavItemId = 'home' | 'explore' | 'create' | 'activity' | 'profile';
 
@@ -31,6 +32,7 @@ export default function BottomNav({ activeTab }: BottomNavProps) {
   const [localActive, setLocalActive] = React.useState<NavItemId>('home');
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const unreadCount = useUnreadActivityCount();
 
   const active = activeTab ?? localActive;
 
@@ -77,7 +79,7 @@ export default function BottomNav({ activeTab }: BottomNavProps) {
                 fill={isActive && item.id === 'home' ? UI.color.purple : 'transparent'}
                 strokeWidth={isActive ? 2.5 : 2}
               />
-              {item.badge && (
+              {item.badge && unreadCount > 0 && (
                 <View style={styles.badge} />
               )}
             </View>

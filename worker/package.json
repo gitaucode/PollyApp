@@ -10,7 +10,8 @@
     "db:migrate:local": "wrangler d1 migrations apply pollpop --local",
     "db:migrate": "wrangler d1 migrations apply pollpop",
     "db:seed:local": "wrangler d1 execute pollpop --local --file=./seed.sql",
-    "db:seed": "wrangler d1 execute pollpop --file=./seed.sql"
+    "db:seed": "wrangler d1 execute pollpop --file=./seed.sql",
+    "hash-password": "node scripts/hash-password.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260620.0",
@@ -18,6 +19,7 @@
     "wrangler": "^4.21.0"
   },
   "dependencies": {
+    "jose": "^6.2.3",
     "pollpop": "file:.."
   }
 }

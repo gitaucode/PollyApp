@@ -1,7 +1,7 @@
+import { getAccessToken, getSessionUserId } from '@/lib/auth-storage';
 import { Poll, PollFeedResponse } from '@/types/pollpop';
 
 const API_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://pollpop-api.stephen-gitau.workers.dev').replace(/\/$/, '');
-const voterKey = `anon-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
 
 class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -10,11 +10,13 @@ class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, token?: string | null): Promise<T> {
+  const accessToken = token ?? getAccessToken();
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       ...init?.headers,
     },
   });
@@ -38,6 +40,11 @@ export interface UserProfile {
   polls: number;
   followers: number;
   following: number;
+  isFollowing?: boolean;
+}
+
+export interface AuthUserProfile extends UserProfile {
+  email: string;
 }
 
 export interface UserPollSummary {
@@ -50,19 +57,54 @@ export interface UserPollSummary {
 
 export interface ActivityItem {
   id: string;
-  type: 'votes' | 'follower' | 'milestone' | 'trending' | string;
+  type: 'votes' | 'follower' | 'milestone' | 'trending' | 'comment' | string;
   title: string;
   subtitle: string;
   unread: boolean;
   timeAgo: string;
+  pollId?: string | null;
+}
+
+export interface PollComment {
+  id: string;
+  body: string;
+  timeAgo: string;
+  author: {
+    id: string;
+    name: string;
+    handle: string;
+    avatar: string;
+  };
+}
+
+interface AuthResponse {
+  token: string;
+  user: AuthUserProfile;
 }
 
 export const pollpopApi = {
-  getFeed: (params: { category?: string; search?: string; limit?: number } = {}) => {
+  register: (name: string, email: string, password: string) =>
+    request<AuthResponse>('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ name, email, password }),
+    }),
+
+  login: (email: string, password: string) =>
+    request<AuthResponse>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }),
+
+  getMe: (token?: string) => request<AuthResponse>('/auth/me', { method: 'GET' }, token),
+
+  getFeed: async (params: { category?: string; search?: string; limit?: number; mode?: 'following' | 'trending' } = {}) => {
+    const userId = getSessionUserId();
     const searchParams = new URLSearchParams();
     if (params.category) searchParams.set('category', params.category);
     if (params.search) searchParams.set('search', params.search);
     if (params.limit) searchParams.set('limit', String(params.limit));
+    if (params.mode === 'following') searchParams.set('mode', 'following');
+    if (userId) searchParams.set('userId', userId);
     const query = searchParams.toString();
     return request<PollFeedResponse>(`/polls${query ? `?${query}` : ''}`);
   },
@@ -85,13 +127,11 @@ export const pollpopApi = {
     return response.poll;
   },
 
-  vote: async (pollId: string, optionId: string) => {
-    const response = await request<{ poll: Poll; accepted: boolean }>(`/polls/${pollId}/votes`, {
+  vote: async (pollId: string, optionId: string) =>
+    request<{ poll: Poll; accepted: boolean }>(`/polls/${pollId}/votes`, {
       method: 'POST',
-      body: JSON.stringify({ optionId, voterKey }),
-    });
-    return response;
-  },
+      body: JSON.stringify({ optionId }),
+    }),
 
   uploadMedia: (input: { filename: string; contentType: string; base64: string }) =>
     request<{ key: string; url: string }>('/uploads', {
@@ -109,15 +149,47 @@ export const pollpopApi = {
     return response.polls;
   },
 
+  getSavedPolls: async (userId: string) => {
+    const response = await request<{ polls: UserPollSummary[] }>(`/users/${userId}/saved`);
+    return response.polls;
+  },
+
+  toggleSavePoll: async (pollId: string, save: boolean) => {
+    const response = await request<{ saved: boolean }>(`/polls/${pollId}/save`, {
+      method: 'POST',
+      body: JSON.stringify({ save }),
+    });
+    return response.saved;
+  },
+
+  getComments: async (pollId: string) => {
+    const response = await request<{ comments: PollComment[] }>(`/polls/${pollId}/comments`);
+    return response.comments;
+  },
+
+  addComment: async (pollId: string, body: string) => {
+    const response = await request<{ comment: PollComment }>(`/polls/${pollId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ body }),
+    });
+    return response.comment;
+  },
+
   getActivity: async (userId: string) => {
     const response = await request<{ activity: ActivityItem[] }>(`/activity/${userId}`);
     return response.activity;
   },
 
-  toggleFollow: async (creatorId: string, userId: string, follow: boolean) => {
+  markActivityRead: async (userId: string, options: { markAll?: boolean; activityId?: string } = { markAll: true }) =>
+    request<{ success: boolean }>(`/activity/${userId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(options),
+    }),
+
+  toggleFollow: async (creatorId: string, follow: boolean) => {
     const response = await request<{ following: boolean }>(`/users/${creatorId}/follow`, {
       method: 'POST',
-      body: JSON.stringify({ userId, follow }),
+      body: JSON.stringify({ follow }),
     });
     return response.following;
   },

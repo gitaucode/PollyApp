@@ -27,6 +27,7 @@ export interface Poll {
   votes: number;
   comments: number;
   shares: number;
+  isSaved?: boolean;
 }
 
 export interface CreatorSummary {
@@ -35,6 +36,7 @@ export interface CreatorSummary {
   handle: string;
   avatar: string;
   polls: number;
+  isFollowing?: boolean;
 }
 
 export interface PollFeedResponse {

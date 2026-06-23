@@ -3,7 +3,8 @@ INSERT OR IGNORE INTO users (id, name, handle, avatar_url, bio, is_creator, has_
   ('u1', 'Maya', '@mayaasks', 'https://i.pravatar.cc/150?u=maya', 'Dating polls and soft chaos.', 1, 1),
   ('u2', 'Tyler', '@tylertalks', 'https://i.pravatar.cc/150?u=tyler', 'Friendly arguments only.', 0, 1),
   ('u3', 'Zoe', '@zoepolls', 'https://i.pravatar.cc/150?u=zoe', 'Polls for overthinkers.', 0, 1),
-  ('u4', 'Kai', '@kaithinks', 'https://i.pravatar.cc/150?u=kai', 'Random questions, real answers.', 0, 1);
+  ('u4', 'Kai', '@kaithinks', 'https://i.pravatar.cc/150?u=kai', 'Random questions, real answers.', 0, 1),
+  ('u_admin', 'Admin', '@admin', 'https://i.pravatar.cc/150?u=admin', 'Site Administrator', 1, 0);
 
 INSERT OR IGNORE INTO polls (id, creator_id, question, category, anonymous, comments_count, shares_count, created_at) VALUES
   ('p1', 'u1', 'Would you date someone your friends dislike?', 'dating', 1, 12, 23, datetime('now', '-2 hours')),
@@ -27,3 +28,9 @@ INSERT OR IGNORE INTO poll_options (id, poll_id, text, emoji, image_url, positio
 INSERT OR IGNORE INTO activity (id, user_id, poll_id, type, title, subtitle, unread, created_at) VALUES
   ('a1', 'u0', 'p1', 'milestone', 'Your poll hit 100 votes!', '"Would you date someone your friends dislike?"', 1, datetime('now', '-1 hours')),
   ('a2', 'u0', 'p3', 'votes', '48 people voted on your poll', '"Is ghosting ever justified?"', 1, datetime('now', '-4 hours'));
+
+DELETE FROM auth_accounts WHERE id IN ('auth_demo', 'auth_admin');
+
+INSERT OR IGNORE INTO auth_accounts (id, user_id, email, password_hash) VALUES
+  ('auth_demo', 'u0', 'demo@pollpop.app', 'c2VlZGRlbW9zYWx0MDAx.wZmHZRRwXXqeaXXMKK8C8N/oBBqjzN6LZTb4jP7TPU0='),
+  ('auth_admin', 'u_admin', 'admin@pollpop.app', 'c2VlZGFkbWluc2FsdDA=.MLqmhUIZMC9GhVrHGRLObLQVCxeidjQVmAoJle66Sn4=');

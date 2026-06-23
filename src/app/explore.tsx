@@ -1,22 +1,33 @@
+import { POLL_CATEGORIES } from '@/constants/categories';
 import { UI } from '@/constants/theme';
 import { pollpopApi } from '@/lib/api';
 import { CreatorSummary, Poll } from '@/types/pollpop';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BarChart2, ChevronRight, Flame, Heart, Search, Sparkles, Users, WalletCards } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Image, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import BottomNav from '../components/BottomNav';
 
-const CATEGORIES = [
-  { id: 'dating', label: 'Dating', icon: Heart, tint: '#F5F0FF', border: '#DDD6FE', accent: UI.color.purpleDark },
-  { id: 'hot-takes', label: 'Hot Takes', icon: Flame, tint: '#FFF7ED', border: '#FED7AA', accent: '#EA580C' },
-  { id: 'friendship', label: 'Friendship', icon: Users, tint: '#F0FDF4', border: '#BBF7D0', accent: '#16A34A' },
-  { id: 'money', label: 'Money', icon: WalletCards, tint: '#FEFCE8', border: '#FDE68A', accent: '#D97706' },
-  { id: 'random', label: 'Random', icon: Sparkles, tint: '#EFF6FF', border: '#BFDBFE', accent: '#2563EB' },
-];
+const EXPLORE_CATEGORY_STYLE: Record<
+  string,
+  { icon: typeof Heart; tint: string; border: string; accent: string }
+> = {
+  dating: { icon: Heart, tint: '#F5F0FF', border: '#DDD6FE', accent: UI.color.purpleDark },
+  'hot-takes': { icon: Flame, tint: '#FFF7ED', border: '#FED7AA', accent: '#EA580C' },
+  friendship: { icon: Users, tint: '#F0FDF4', border: '#BBF7D0', accent: '#16A34A' },
+  money: { icon: WalletCards, tint: '#FEFCE8', border: '#FDE68A', accent: '#D97706' },
+  random: { icon: Sparkles, tint: '#EFF6FF', border: '#BFDBFE', accent: '#2563EB' },
+  spicy: { icon: Flame, tint: '#FFF1F2', border: '#FECDD3', accent: '#E11D48' },
+};
 
-function CategoryChip({ cat, active, onPress }: { cat: typeof CATEGORIES[0]; active: boolean; onPress: () => void }) {
+const CATEGORIES = POLL_CATEGORIES.map((category) => ({
+  ...category,
+  ...EXPLORE_CATEGORY_STYLE[category.id],
+}));
+
+function CategoryChip({ cat, active, onPress }: { cat: typeof CATEGORIES[number]; active: boolean; onPress: () => void }) {
   const Icon = cat.icon;
 
   return (
@@ -41,7 +52,7 @@ function SectionHeader({ title, action }: { title: string; action?: string }) {
 }
 
 function TrendingCard({ item, isLast }: { item: Poll; isLast: boolean }) {
-  const router = useRouter() as any;
+  const router = useRouter();
   return (
     <TouchableOpacity
       activeOpacity={0.78}
@@ -49,12 +60,16 @@ function TrendingCard({ item, isLast }: { item: Poll; isLast: boolean }) {
       onPress={() => router.push({ pathname: '/results', params: { pollId: item.id } })}
     >
       <View style={styles.trendingBody}>
-        <View style={styles.authorRow}>
+        <TouchableOpacity
+          style={styles.authorRow}
+          activeOpacity={0.75}
+          onPress={() => router.push({ pathname: '/users/[id]', params: { id: item.creator.id } })}
+        >
           <Image source={{ uri: item.creator.avatar }} style={styles.smallAvatar} />
           <Text style={styles.authorText}>{item.creator.name}</Text>
           <View style={styles.metaDot} />
           <Text style={styles.timeText}>{item.timeAgo}</Text>
-        </View>
+        </TouchableOpacity>
         <Text style={styles.questionText} numberOfLines={2}>{item.question}</Text>
         <View style={styles.voteRow}>
           <BarChart2 size={12} color={UI.color.purple} strokeWidth={2.5} />
@@ -69,15 +84,20 @@ function TrendingCard({ item, isLast }: { item: Poll; isLast: boolean }) {
 }
 
 function CreatorCard({ creator }: { creator: CreatorSummary }) {
-  const [following, setFollowing] = useState(false);
+  const router = useRouter();
+  const [following, setFollowing] = useState(creator.isFollowing ?? false);
   const [isUpdating, setIsUpdating] = useState(false);
+
+  useEffect(() => {
+    setFollowing(creator.isFollowing ?? false);
+  }, [creator.id, creator.isFollowing]);
 
   const handleFollow = async () => {
     if (isUpdating) return;
     setIsUpdating(true);
     try {
       const newFollowing = !following;
-      await pollpopApi.toggleFollow(creator.id, 'u0', newFollowing);
+      await pollpopApi.toggleFollow(creator.id, newFollowing);
       setFollowing(newFollowing);
     } catch (err) {
       console.error('Follow failed:', err);
@@ -88,14 +108,19 @@ function CreatorCard({ creator }: { creator: CreatorSummary }) {
 
   return (
     <View style={styles.creatorCard}>
-      <LinearGradient colors={UI.gradient.avatar} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.creatorRing}>
-        <View style={styles.creatorRingInner}>
-          <Image source={{ uri: creator.avatar }} style={styles.creatorAvatar} />
-        </View>
-      </LinearGradient>
-      <Text style={styles.creatorName} numberOfLines={1}>{creator.name}</Text>
-      <Text style={styles.creatorHandle} numberOfLines={1}>{creator.handle}</Text>
-      <Text style={styles.creatorPolls}>{creator.polls} polls</Text>
+      <TouchableOpacity
+        activeOpacity={0.8}
+        onPress={() => router.push({ pathname: '/users/[id]', params: { id: creator.id } })}
+      >
+        <LinearGradient colors={UI.gradient.avatar} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.creatorRing}>
+          <View style={styles.creatorRingInner}>
+            <Image source={{ uri: creator.avatar }} style={styles.creatorAvatar} />
+          </View>
+        </LinearGradient>
+        <Text style={styles.creatorName} numberOfLines={1}>{creator.name}</Text>
+        <Text style={styles.creatorHandle} numberOfLines={1}>{creator.handle}</Text>
+        <Text style={styles.creatorPolls}>{creator.polls} polls</Text>
+      </TouchableOpacity>
       <TouchableOpacity onPress={handleFollow} activeOpacity={0.8} disabled={isUpdating} style={[styles.followButton, following && styles.followingButton]}>
         <Text style={[styles.followText, following && styles.followingText]}>{isUpdating ? '...' : (following ? 'Following' : 'Follow')}</Text>
       </TouchableOpacity>
@@ -111,12 +136,14 @@ export default function ExploreScreen() {
   const [trending, setTrending] = useState<Poll[]>([]);
   const [creators, setCreators] = useState<CreatorSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const loadExplore = useCallback(async () => {
+  const loadExplore = useCallback(async (refresh = false) => {
     try {
+      if (refresh) setRefreshing(true);
       setError(null);
       const feed = await pollpopApi.getFeed({
-        category: activeCategory === 'hot-takes' ? 'hot-take' : activeCategory,
+        category: activeCategory,
         search: searchText,
         limit: 10,
       });
@@ -124,6 +151,8 @@ export default function ExploreScreen() {
       setCreators(feed.creators);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load explore data.');
+    } finally {
+      setRefreshing(false);
     }
   }, [activeCategory, searchText]);
 
@@ -144,6 +173,13 @@ export default function ExploreScreen() {
         style={styles.scroll}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: Math.max(insets.bottom + 88, 108) }]}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => loadExplore(true)}
+            tintColor={UI.color.purple}
+          />
+        }
       >
         <View style={[styles.searchWrap, searchFocused && styles.searchWrapFocused]}>
           <Search size={16} color={searchFocused ? UI.color.purple : UI.color.subtle} strokeWidth={2.5} />

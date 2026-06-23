@@ -1,7 +1,7 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { BarChart2, MessageCircle, MoreHorizontal, Share2, ShieldCheck, Sparkles } from 'lucide-react-native';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
     Image,
     ImageSourcePropType,
@@ -10,6 +10,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { sharePoll } from '@/lib/share-poll';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface ImagePollOptionData {
@@ -21,9 +22,10 @@ export interface ImagePollOptionData {
 export interface ImagePollData {
   id: string;
   creator: {
+    id: string;
     name: string;
     avatar: string;
-    badge?: string;   // emoji badge, e.g. '🔥'
+    badge?: string;
     isCreator?: boolean;
   };
   question: string;
@@ -36,7 +38,7 @@ export interface ImagePollData {
 
 interface ImagePollCardProps {
   poll: ImagePollData;
-  onVote?: (pollId: string, optionId: string) => Promise<void> | void;
+  onVote?: (pollId: string, optionId: string) => Promise<{ accepted: boolean } | void>;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -44,12 +46,22 @@ export default function ImagePollCard({ poll, onVote }: ImagePollCardProps) {
   const router = useRouter() as any;
   const [selected, setSelected] = useState<string | null>(null);
   const [isVoting, setIsVoting] = useState(false);
+  const [hasVoted, setHasVoted] = useState(false);
+  const [alreadyVoted, setAlreadyVoted] = useState(false);
+
+  useEffect(() => {
+    setSelected(null);
+    setHasVoted(false);
+    setAlreadyVoted(false);
+  }, [poll.id]);
 
   const handleVote = async () => {
-    if (!selected || !onVote || isVoting) return;
+    if (!selected || !onVote || isVoting || hasVoted) return;
     setIsVoting(true);
     try {
-      await onVote(poll.id, selected);
+      const result = await onVote(poll.id, selected);
+      setHasVoted(true);
+      if (result && !result.accepted) setAlreadyVoted(true);
     } finally {
       setIsVoting(false);
     }
@@ -60,7 +72,11 @@ export default function ImagePollCard({ poll, onVote }: ImagePollCardProps) {
       <View style={styles.card}>
         {/* ── Creator row ── */}
         <View style={styles.creatorRow}>
-          <View style={styles.creatorLeft}>
+          <TouchableOpacity
+            style={styles.creatorLeft}
+            activeOpacity={0.75}
+            onPress={() => router.push({ pathname: '/users/[id]', params: { id: poll.creator.id } })}
+          >
             <Image source={{ uri: poll.creator.avatar }} style={styles.creatorAvatar} />
             <Text style={styles.creatorName}>{poll.creator.name}</Text>
             {poll.creator.badge && (
@@ -68,7 +84,7 @@ export default function ImagePollCard({ poll, onVote }: ImagePollCardProps) {
             )}
             <View style={styles.dot} />
             <Text style={styles.timeAgo}>{poll.timeAgo}</Text>
-          </View>
+          </TouchableOpacity>
           <TouchableOpacity hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <MoreHorizontal color="#9CA3AF" size={20} />
           </TouchableOpacity>
@@ -91,8 +107,11 @@ export default function ImagePollCard({ poll, onVote }: ImagePollCardProps) {
               <TouchableOpacity
                 key={option.id}
                 style={[styles.optionCard, isSelected && styles.optionCardSelected]}
-                onPress={() => setSelected(option.id)}
+                onPress={() => {
+                  if (!hasVoted) setSelected(option.id);
+                }}
                 activeOpacity={0.85}
+                disabled={hasVoted}
               >
                 {/* Image */}
                 <Image
@@ -125,24 +144,45 @@ export default function ImagePollCard({ poll, onVote }: ImagePollCardProps) {
           })}
         </View>
 
-        {/* ── Vote button ── */}
-        <TouchableOpacity
-          style={styles.voteButtonWrapper}
-          activeOpacity={0.9}
-          disabled={!selected || isVoting}
-          onPress={handleVote}
-        >
-          <LinearGradient
-            colors={selected ? ['#9333EA', '#7C3AED'] : ['#C4B5FD', '#A78BFA']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.voteButton}
+        {alreadyVoted && (
+          <Text style={styles.votedHint}>You already voted on this poll.</Text>
+        )}
+
+        {hasVoted ? (
+          <TouchableOpacity
+            style={styles.voteButtonWrapper}
+            activeOpacity={0.9}
+            onPress={() => router.push({ pathname: '/results', params: { pollId: poll.id } })}
           >
-            <Sparkles size={15} color="white" style={{ marginRight: 6 }} />
-            <Text style={styles.voteButtonText}>{isVoting ? 'Voting...' : 'Vote anonymously'}</Text>
-            <Sparkles size={15} color="white" style={{ marginLeft: 6 }} />
-          </LinearGradient>
-        </TouchableOpacity>
+            <LinearGradient
+              colors={['#9333EA', '#7C3AED']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.voteButton}
+            >
+              <BarChart2 size={15} color="white" style={{ marginRight: 6 }} />
+              <Text style={styles.voteButtonText}>View results</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={styles.voteButtonWrapper}
+            activeOpacity={0.9}
+            disabled={!selected || isVoting}
+            onPress={handleVote}
+          >
+            <LinearGradient
+              colors={selected ? ['#9333EA', '#7C3AED'] : ['#C4B5FD', '#A78BFA']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.voteButton}
+            >
+              <Sparkles size={15} color="white" style={{ marginRight: 6 }} />
+              <Text style={styles.voteButtonText}>{isVoting ? 'Voting...' : 'Vote anonymously'}</Text>
+              <Sparkles size={15} color="white" style={{ marginLeft: 6 }} />
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
 
         {/* ── Engagement row ── */}
         <View style={styles.engagementRow}>
@@ -166,11 +206,17 @@ export default function ImagePollCard({ poll, onVote }: ImagePollCardProps) {
           </TouchableOpacity>
 
           <View style={styles.engagementRight}>
-            <TouchableOpacity style={styles.engagementItem}>
+            <TouchableOpacity
+              style={styles.engagementItem}
+              onPress={() => router.push({ pathname: '/results', params: { pollId: poll.id } })}
+            >
               <MessageCircle color="#9CA3AF" size={17} />
               <Text style={styles.engagementCount}>{poll.comments}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.engagementItem}>
+            <TouchableOpacity
+              style={styles.engagementItem}
+              onPress={() => void sharePoll({ id: poll.id, question: poll.question })}
+            >
               <Share2 color="#9CA3AF" size={17} />
               <Text style={styles.engagementCount}>{poll.shares}</Text>
             </TouchableOpacity>
@@ -347,6 +393,13 @@ const styles = StyleSheet.create({
   },
   optionTextSelected: {
     color: '#7C3AED',
+  },
+  votedHint: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#7C3AED',
+    textAlign: 'center',
+    marginBottom: 10,
   },
 
   // Vote button

@@ -5,23 +5,34 @@ import { MoreHorizontal, MessageCircle, Share2, ShieldCheck, BadgeCheck, BarChar
 import { useRouter } from 'expo-router';
 import { Poll } from '@/types/pollpop';
 import PollOption from './PollOption';
+import { sharePoll } from '@/lib/share-poll';
 import { UI } from '@/constants/theme';
 
 interface PollCardProps {
   poll: Poll;
-  onVote?: (pollId: string, optionId: string) => Promise<void> | void;
+  onVote?: (pollId: string, optionId: string) => Promise<{ accepted: boolean } | void>;
 }
 
 export default function PollCard({ poll, onVote }: PollCardProps) {
   const router = useRouter();
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [isVoting, setIsVoting] = useState(false);
+  const [hasVoted, setHasVoted] = useState(false);
+  const [alreadyVoted, setAlreadyVoted] = useState(false);
+
+  React.useEffect(() => {
+    setSelectedOption(null);
+    setHasVoted(false);
+    setAlreadyVoted(false);
+  }, [poll.id]);
 
   const handleVote = async () => {
-    if (!selectedOption || !onVote || isVoting) return;
+    if (!selectedOption || !onVote || isVoting || hasVoted) return;
     setIsVoting(true);
     try {
-      await onVote(poll.id, selectedOption);
+      const result = await onVote(poll.id, selectedOption);
+      setHasVoted(true);
+      if (result && !result.accepted) setAlreadyVoted(true);
     } finally {
       setIsVoting(false);
     }
@@ -36,7 +47,11 @@ export default function PollCard({ poll, onVote }: PollCardProps) {
         style={styles.card}
       >
         <View style={styles.creatorRow}>
-          <View style={styles.creatorLeft}>
+          <TouchableOpacity
+            style={styles.creatorLeft}
+            activeOpacity={0.75}
+            onPress={() => router.push({ pathname: '/users/[id]', params: { id: poll.creator.id } })}
+          >
             <Image source={{ uri: poll.creator.avatar }} style={styles.creatorAvatar} />
             <Text style={styles.creatorName}>{poll.creator.name}</Text>
             {poll.creator.isCreator && (
@@ -44,7 +59,7 @@ export default function PollCard({ poll, onVote }: PollCardProps) {
             )}
             <View style={styles.dot} />
             <Text style={styles.timeAgo}>{poll.timeAgo}</Text>
-          </View>
+          </TouchableOpacity>
           <TouchableOpacity hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <MoreHorizontal color="rgba(255,255,255,0.58)" size={20} />
           </TouchableOpacity>
@@ -64,27 +79,51 @@ export default function PollCard({ poll, onVote }: PollCardProps) {
               text={option.text}
               emoji={option.emoji || ''}
               isSelected={selectedOption === option.id}
-              onPress={() => setSelectedOption(option.id)}
+              onPress={() => {
+                if (!hasVoted) setSelectedOption(option.id);
+              }}
             />
           ))}
         </View>
 
-        <TouchableOpacity
-          activeOpacity={0.9}
-          style={styles.voteButtonWrapper}
-          onPress={handleVote}
-          disabled={!selectedOption || isVoting}
-        >
-          <LinearGradient
-            colors={UI.gradient.brand}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.voteButton}
+        {alreadyVoted && (
+          <Text style={styles.votedHint}>You already voted on this poll.</Text>
+        )}
+
+        {hasVoted ? (
+          <TouchableOpacity
+            activeOpacity={0.9}
+            style={styles.voteButtonWrapper}
+            onPress={() => router.push({ pathname: '/results', params: { pollId: poll.id } })}
           >
-            <Text style={styles.voteButtonText}>{isVoting ? 'Voting...' : 'Vote anonymously'}</Text>
-            <ShieldCheck size={16} color={UI.color.white} />
-          </LinearGradient>
-        </TouchableOpacity>
+            <LinearGradient
+              colors={UI.gradient.brand}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.voteButton}
+            >
+              <BarChart2 size={16} color={UI.color.white} />
+              <Text style={styles.voteButtonText}>View results</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            activeOpacity={0.9}
+            style={styles.voteButtonWrapper}
+            onPress={handleVote}
+            disabled={!selectedOption || isVoting}
+          >
+            <LinearGradient
+              colors={UI.gradient.brand}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.voteButton}
+            >
+              <Text style={styles.voteButtonText}>{isVoting ? 'Voting...' : 'Vote anonymously'}</Text>
+              <ShieldCheck size={16} color={UI.color.white} />
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
       </LinearGradient>
 
       <View style={styles.engagementRow}>
@@ -108,11 +147,17 @@ export default function PollCard({ poll, onVote }: PollCardProps) {
         </TouchableOpacity>
 
         <View style={styles.engagementRight}>
-          <TouchableOpacity style={styles.engagementItem}>
+          <TouchableOpacity
+            style={styles.engagementItem}
+            onPress={() => router.push({ pathname: '/results', params: { pollId: poll.id } })}
+          >
             <MessageCircle color={UI.color.subtle} size={17} />
             <Text style={styles.engagementCount}>{poll.comments}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.engagementItem}>
+          <TouchableOpacity
+            style={styles.engagementItem}
+            onPress={() => void sharePoll({ id: poll.id, question: poll.question })}
+          >
             <Share2 color={UI.color.subtle} size={17} />
             <Text style={styles.engagementCount}>{poll.shares}</Text>
           </TouchableOpacity>
@@ -196,6 +241,13 @@ const styles = StyleSheet.create({
   },
   optionsContainer: {
     marginBottom: UI.space.sm,
+  },
+  votedHint: {
+    color: UI.color.purpleSoft,
+    fontSize: UI.text.caption,
+    fontWeight: '600',
+    marginBottom: UI.space.sm,
+    textAlign: 'center',
   },
   voteButtonWrapper: {
     borderRadius: UI.radius.md,

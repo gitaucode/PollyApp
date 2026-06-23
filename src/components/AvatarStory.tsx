@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Image, StyleSheet } from 'react-native';
+import { View, Text, Image, StyleSheet, TouchableOpacity } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BadgeCheck, Plus } from 'lucide-react-native';
 import { User } from '@/types/pollpop';
@@ -8,15 +8,15 @@ import { UI } from '@/constants/theme';
 interface AvatarStoryProps {
   user?: User;
   isAdd?: boolean;
+  onPress?: () => void;
 }
 
 const AVATAR_SIZE = 52;
 
-export default function AvatarStory({ user, isAdd }: AvatarStoryProps) {
+export default function AvatarStory({ user, isAdd, onPress }: AvatarStoryProps) {
   const avatarUri = isAdd ? 'https://i.pravatar.cc/150?u=currentuser' : user?.avatar;
-
-  return (
-    <View style={styles.container}>
+  const content = (
+    <>
       <View style={styles.ringWrapper}>
         <LinearGradient
           colors={UI.gradient.avatar}
@@ -44,8 +44,18 @@ export default function AvatarStory({ user, isAdd }: AvatarStoryProps) {
           <BadgeCheck size={10} color={UI.color.purple} fill={UI.color.purpleSoft} />
         )}
       </View>
-    </View>
+    </>
   );
+
+  if (onPress && !isAdd) {
+    return (
+      <TouchableOpacity style={styles.container} onPress={onPress} activeOpacity={0.8}>
+        {content}
+      </TouchableOpacity>
+    );
+  }
+
+  return <View style={styles.container}>{content}</View>;
 }
 
 const styles = StyleSheet.create({

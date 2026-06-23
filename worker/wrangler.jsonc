@@ -17,6 +17,7 @@
     }
   ],
   "vars": {
-    "PUBLIC_MEDIA_BASE_URL": ""
+    "PUBLIC_MEDIA_BASE_URL": "",
+    "JWT_SECRET": "dev-only-change-before-production"
   }
 }

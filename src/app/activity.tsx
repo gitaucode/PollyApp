@@ -4,19 +4,19 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  Image,
   StyleSheet,
   ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import BottomNav from '../components/BottomNav';
 import { UI } from '@/constants/theme';
+import { useAuth } from '@/hooks/use-auth';
 import { pollpopApi, ActivityItem } from '@/lib/api';
 
 const PURPLE = UI.color.purple;
 const PURPLE_DARK = UI.color.purpleDark;
-const MY_USER_ID = 'u0';
 
 // ─── Emoji / tint mapping by type ─────────────────────────────────────────────
 const TYPE_META: Record<string, { emoji: string; tint: string }> = {
@@ -24,15 +24,28 @@ const TYPE_META: Record<string, { emoji: string; tint: string }> = {
   follower:  { emoji: '👤', tint: '#F3E8FF' },
   milestone: { emoji: '🏆', tint: '#FFF9ED' },
   trending:  { emoji: '🔥', tint: '#FFF4F0' },
+  comment:   { emoji: '💬', tint: '#F0FDF4' },
 };
 const DEFAULT_META = { emoji: '📣', tint: '#F3F4F6' };
 
 // ─── Activity Row ─────────────────────────────────────────────────────────────
 function ActivityRow({ item }: { item: ActivityItem }) {
+  const router = useRouter();
   const meta = TYPE_META[item.type] ?? DEFAULT_META;
 
+  const handlePress = () => {
+    if (item.pollId) {
+      router.push({ pathname: '/results', params: { pollId: item.pollId } });
+    }
+  };
+
   return (
-    <TouchableOpacity style={styles.row} activeOpacity={0.72}>
+    <TouchableOpacity
+      style={styles.row}
+      activeOpacity={item.pollId ? 0.72 : 1}
+      onPress={handlePress}
+      disabled={!item.pollId}
+    >
       {item.unread && <View style={styles.unreadDot} />}
 
       <View style={[styles.iconTile, { backgroundColor: meta.tint }]}>
@@ -61,21 +74,30 @@ function SectionHeader({ label }: { label: string }) {
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 export default function ActivityScreen() {
   const insets = useSafeAreaInsets();
+  const { userId } = useAuth();
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadActivity = useCallback(async () => {
+  const loadActivity = useCallback(async (refresh = false) => {
     try {
       setError(null);
-      const items = await pollpopApi.getActivity(MY_USER_ID);
+      if (refresh) setRefreshing(true);
+      else setLoading(true);
+      const items = await pollpopApi.getActivity(userId);
       setActivity(items);
+      if (items.some((item) => item.unread)) {
+        await pollpopApi.markActivityRead(userId, { markAll: true });
+        setActivity(items.map((item) => ({ ...item, unread: false })));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load activity.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  }, []);
+  }, [userId]);
 
   useEffect(() => { void loadActivity(); }, [loadActivity]);
 
@@ -106,16 +128,32 @@ export default function ActivityScreen() {
           <Text style={styles.errorText}>{error}</Text>
         </View>
       ) : activity.length === 0 ? (
-        <View style={styles.centered}>
+        <ScrollView
+          contentContainerStyle={styles.centered}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => loadActivity(true)}
+              tintColor={UI.color.purple}
+            />
+          }
+        >
           <Text style={styles.emptyEmoji}>📭</Text>
           <Text style={styles.emptyTitle}>All quiet here</Text>
           <Text style={styles.emptySubtitle}>Activity on your polls will show up here.</Text>
-        </View>
+        </ScrollView>
       ) : (
         <ScrollView
           style={styles.scroll}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => loadActivity(true)}
+              tintColor={UI.color.purple}
+            />
+          }
         >
           {today.length > 0 && (
             <>

@@ -1,19 +1,23 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Image,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
   ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ChevronLeft, Lock, Upload } from 'lucide-react-native';
+import { ChevronLeft, Lock, Bookmark, Share2, Send } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { pollpopApi } from '@/lib/api';
+import { pollpopApi, PollComment } from '@/lib/api';
+import { sharePoll } from '@/lib/share-poll';
 import { UI } from '@/constants/theme';
 import { Poll } from '@/types/pollpop';
 
@@ -24,12 +28,6 @@ interface ResultOption {
   votes: number;
   barColors: [string, string];
 }
-
-const COMMENT_AVATARS = [
-  'https://i.pravatar.cc/150?img=12',
-  'https://i.pravatar.cc/150?img=25',
-  'https://i.pravatar.cc/150?img=33',
-];
 
 const BAR_COLORS: [string, string][] = [
   ['#9B59F4', '#7C3AED'],
@@ -78,25 +76,50 @@ function ResultBar({ option, delay }: { option: ResultOption; delay: number }) {
   );
 }
 
+function CommentRow({ comment }: { comment: PollComment }) {
+  return (
+    <View style={styles.commentRow}>
+      <Image source={{ uri: comment.author.avatar }} style={styles.commentAvatar} />
+      <View style={styles.commentBody}>
+        <View style={styles.commentMeta}>
+          <Text style={styles.commentAuthor}>{comment.author.name}</Text>
+          <Text style={styles.commentTime}>{comment.timeAgo}</Text>
+        </View>
+        <Text style={styles.commentText}>{comment.body}</Text>
+      </View>
+    </View>
+  );
+}
+
 export default function ResultsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const scrollRef = useRef<ScrollView>(null);
   const { pollId } = useLocalSearchParams<{ pollId?: string }>();
   const [poll, setPoll] = useState<Poll | null>(null);
+  const [comments, setComments] = useState<PollComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isSaved, setIsSaved] = useState(false);
+  const [saveUpdating, setSaveUpdating] = useState(false);
+  const [commentText, setCommentText] = useState('');
+  const [postingComment, setPostingComment] = useState(false);
+  const [commentError, setCommentError] = useState<string | null>(null);
 
   const loadResults = useCallback(async () => {
     try {
       setError(null);
       if (pollId) {
-        // Load a specific poll by ID (navigated from PollCard)
-        setPoll(await pollpopApi.getPoll(pollId));
+        const loaded = await pollpopApi.getPoll(pollId);
+        setPoll(loaded);
+        setIsSaved(Boolean(loaded.isSaved));
       } else {
-        // Fallback: show the most recent poll
         const feed = await pollpopApi.getFeed({ limit: 1 });
         if (feed.polls[0]) {
-          setPoll(await pollpopApi.getPoll(feed.polls[0].id));
+          const loaded = await pollpopApi.getPoll(feed.polls[0].id);
+          setPoll(loaded);
+          setIsSaved(Boolean(loaded.isSaved));
         }
       }
     } catch (err) {
@@ -106,10 +129,25 @@ export default function ResultsScreen() {
     }
   }, [pollId]);
 
+  const loadComments = useCallback(async (id: string) => {
+    try {
+      setCommentsLoading(true);
+      setComments(await pollpopApi.getComments(id));
+    } catch (err) {
+      setCommentError(err instanceof Error ? err.message : 'Could not load comments.');
+    } finally {
+      setCommentsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     const timeout = setTimeout(() => { void loadResults(); }, 0);
     return () => clearTimeout(timeout);
   }, [loadResults]);
+
+  useEffect(() => {
+    if (poll?.id) void loadComments(poll.id);
+  }, [poll?.id, loadComments]);
 
   const resultOptions = useMemo<ResultOption[]>(() => {
     if (!poll) return [];
@@ -122,16 +160,71 @@ export default function ResultsScreen() {
     }));
   }, [poll]);
 
+  const handleToggleSave = async () => {
+    if (!poll || saveUpdating) return;
+    setSaveUpdating(true);
+    try {
+      const saved = await pollpopApi.toggleSavePoll(poll.id, !isSaved);
+      setIsSaved(saved);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not update saved poll.');
+    } finally {
+      setSaveUpdating(false);
+    }
+  };
+
+  const handleShare = () => {
+    if (!poll) return;
+    void sharePoll({ id: poll.id, question: poll.question });
+  };
+
+  const handlePostComment = async () => {
+    const text = commentText.trim();
+    if (!poll || !text || postingComment) return;
+    setPostingComment(true);
+    setCommentError(null);
+    try {
+      const comment = await pollpopApi.addComment(poll.id, text);
+      setComments((current) => [...current, comment]);
+      setPoll((current) => current ? { ...current, comments: current.comments + 1 } : current);
+      setCommentText('');
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+    } catch (err) {
+      setCommentError(err instanceof Error ? err.message : 'Could not post comment.');
+    } finally {
+      setPostingComment(false);
+    }
+  };
+
   return (
-    <View style={styles.root}>
+    <KeyboardAvoidingView
+      style={styles.root}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
+    >
       <View style={[styles.header, { paddingTop: Math.max(insets.top, 14) }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn} activeOpacity={0.7}>
           <ChevronLeft size={24} color={UI.color.black} strokeWidth={2.5} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Results</Text>
-        <TouchableOpacity style={styles.iconBtn} activeOpacity={0.7}>
-          <Upload size={20} color={UI.color.black} strokeWidth={2} />
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={styles.iconBtn}
+            activeOpacity={0.7}
+            onPress={handleToggleSave}
+            disabled={saveUpdating || !poll}
+          >
+            <Bookmark
+              size={20}
+              color={UI.color.purple}
+              fill={isSaved ? UI.color.purple : 'transparent'}
+              strokeWidth={2}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn} activeOpacity={0.7} onPress={handleShare} disabled={!poll}>
+            <Share2 size={20} color={UI.color.black} strokeWidth={2} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {loading ? (
@@ -147,67 +240,96 @@ export default function ResultsScreen() {
           <Text style={styles.errorTextFull}>No poll found.</Text>
         </View>
       ) : (
-        <ScrollView
-          style={styles.scroll}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingBottom: Math.max(insets.bottom + 80, 100) },
-          ]}
-        >
-          <LinearGradient
-            colors={['#EDE9FF', '#F5F0FF', '#FDF8FF']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.questionCard}
+        <>
+          <ScrollView
+            ref={scrollRef}
+            style={styles.scroll}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingBottom: 16 },
+            ]}
+            keyboardShouldPersistTaps="handled"
           >
-            <Text style={styles.decorTop}>Pop</Text>
-            <Text style={styles.authorLine}>
-              {poll.creator.name}  —  {poll.timeAgo}
-            </Text>
-            <Text style={styles.questionText}>{poll.question}</Text>
-            <View style={styles.anonBadge}>
-              <Lock size={12} color="#7C3AED" strokeWidth={2.5} />
-              <Text style={styles.anonBadgeText}>Anonymous vote</Text>
-            </View>
-          </LinearGradient>
-
-          <View style={styles.voteFooter}>
-            <Text style={styles.totalVotes}>
-              <Text style={styles.totalVotesBold}>{poll.votes}</Text> votes
-            </Text>
-            <View style={styles.privateRow}>
-              <Lock size={11} color={UI.color.subtle} strokeWidth={2.5} />
-              <Text style={styles.privateText}>Your vote is private</Text>
-            </View>
-          </View>
-
-          <View style={styles.barsSection}>
-            {resultOptions.map((opt, i) => (
-              <ResultBar key={opt.id} option={opt} delay={i * 120} />
-            ))}
-          </View>
-
-          <TouchableOpacity style={styles.commentsRow} activeOpacity={0.75}>
-            <View style={styles.commentsLeft}>
-              <View style={styles.avatarStack}>
-                {COMMENT_AVATARS.map((uri, i) => (
-                  <Image
-                    key={uri}
-                    source={{ uri }}
-                    style={[styles.commentAvatar, { marginLeft: i === 0 ? 0 : -10, zIndex: 3 - i }]}
-                  />
-                ))}
+            <LinearGradient
+              colors={['#EDE9FF', '#F5F0FF', '#FDF8FF']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.questionCard}
+            >
+              <Text style={styles.decorTop}>Pop</Text>
+              <Text style={styles.authorLine}>
+                {poll.creator.name}  —  {poll.timeAgo}
+              </Text>
+              <Text style={styles.questionText}>{poll.question}</Text>
+              <View style={styles.anonBadge}>
+                <Lock size={12} color="#7C3AED" strokeWidth={2.5} />
+                <Text style={styles.anonBadgeText}>Anonymous vote</Text>
               </View>
-              <View>
-                <Text style={styles.commentsTitle}>People are talking</Text>
-                <Text style={styles.commentsSub}>{poll.comments} comments</Text>
+            </LinearGradient>
+
+            <View style={styles.voteFooter}>
+              <Text style={styles.totalVotes}>
+                <Text style={styles.totalVotesBold}>{poll.votes}</Text> votes
+              </Text>
+              <View style={styles.privateRow}>
+                <Lock size={11} color={UI.color.subtle} strokeWidth={2.5} />
+                <Text style={styles.privateText}>Your vote is private</Text>
               </View>
             </View>
-          </TouchableOpacity>
-        </ScrollView>
+
+            <View style={styles.barsSection}>
+              {resultOptions.map((opt, i) => (
+                <ResultBar key={opt.id} option={opt} delay={i * 120} />
+              ))}
+            </View>
+
+            <View style={styles.commentsSection}>
+              <Text style={styles.commentsHeading}>
+                Comments {poll.comments > 0 ? `(${poll.comments})` : ''}
+              </Text>
+              {commentsLoading && comments.length === 0 ? (
+                <ActivityIndicator color={UI.color.purple} style={{ marginVertical: 16 }} />
+              ) : comments.length === 0 ? (
+                <Text style={styles.commentsEmpty}>Be the first to share your take.</Text>
+              ) : (
+                <View style={styles.commentsList}>
+                  {comments.map((comment) => (
+                    <CommentRow key={comment.id} comment={comment} />
+                  ))}
+                </View>
+              )}
+              {commentError && <Text style={styles.commentError}>{commentError}</Text>}
+            </View>
+          </ScrollView>
+
+          <View style={[styles.composeBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+            <TextInput
+              style={styles.composeInput}
+              placeholder="Add a comment..."
+              placeholderTextColor="#9CA3AF"
+              value={commentText}
+              onChangeText={setCommentText}
+              maxLength={500}
+              multiline
+              editable={!postingComment}
+            />
+            <TouchableOpacity
+              style={[styles.sendBtn, (!commentText.trim() || postingComment) && styles.sendBtnDisabled]}
+              onPress={handlePostComment}
+              disabled={!commentText.trim() || postingComment}
+              activeOpacity={0.85}
+            >
+              {postingComment ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Send size={18} color="#fff" strokeWidth={2.2} />
+              )}
+            </TouchableOpacity>
+          </View>
+        </>
       )}
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -232,6 +354,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   iconBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  headerActions: { flexDirection: 'row', alignItems: 'center' },
   headerTitle: { fontSize: 17, fontWeight: '700', color: '#111827' },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   errorTextFull: { color: '#DC2626', fontSize: 14, fontWeight: '600', textAlign: 'center', paddingHorizontal: 32 },
@@ -270,18 +393,68 @@ const styles = StyleSheet.create({
   privateRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   privateText: { fontSize: 12, color: '#9CA3AF', fontWeight: '500' },
   barsSection: { marginBottom: 8 },
-  commentsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 14,
+  commentsSection: {
+    marginTop: 8,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
   },
-  commentsLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  avatarStack: { flexDirection: 'row', alignItems: 'center' },
+  commentsHeading: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#111827',
+    marginBottom: 12,
+  },
+  commentsEmpty: {
+    fontSize: 14,
+    color: '#9CA3AF',
+    fontWeight: '500',
+    marginBottom: 8,
+  },
+  commentsList: { gap: 14 },
+  commentRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   commentAvatar: {
-    width: 32, height: 32, borderRadius: 16,
-    borderWidth: 2, borderColor: '#FFFFFF', backgroundColor: '#F3F4F6',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F3F4F6',
   },
-  commentsTitle: { fontSize: 14, fontWeight: '700', color: '#111827' },
-  commentsSub: { fontSize: 12, color: '#6B7280', marginTop: 1 },
+  commentBody: { flex: 1 },
+  commentMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  commentAuthor: { fontSize: 13, fontWeight: '700', color: '#111827' },
+  commentTime: { fontSize: 11, color: '#9CA3AF', fontWeight: '500' },
+  commentText: { fontSize: 14, color: '#374151', lineHeight: 20 },
+  commentError: { color: '#DC2626', fontSize: 12, fontWeight: '600', marginTop: 8 },
+  composeBar: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    backgroundColor: '#FFFFFF',
+  },
+  composeInput: {
+    flex: 1,
+    minHeight: 42,
+    maxHeight: 100,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#111827',
+  },
+  sendBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: UI.color.purple,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sendBtnDisabled: { opacity: 0.45 },
 });

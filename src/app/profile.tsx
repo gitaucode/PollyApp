@@ -1,12 +1,16 @@
+import { CATEGORY_EMOJI } from '@/constants/categories';
 import { UI } from '@/constants/theme';
 import { pollpopApi, UserPollSummary, UserProfile } from '@/lib/api';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Settings, X } from 'lucide-react-native';
+import { useAuth } from '@/hooks/use-auth';
+import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Image,
     Modal,
+    RefreshControl,
     ScrollView,
     StyleSheet,
     Text,
@@ -50,21 +54,17 @@ function StatItem({ value, label }: { value: string | number; label: string }) {
   );
 }
 
-// ─── Category emoji helper ────────────────────────────────────────────────────
-const CATEGORY_EMOJI: Record<string, string> = {
-  spicy: '🌶️',
-  dating: '💜',
-  friendship: '🤝',
-  'hot-take': '🔥',
-  random: '😎',
-};
-
 // ─── Poll Row ─────────────────────────────────────────────────────────────────
 function PollRow({ poll }: { poll: UserPollSummary }) {
+  const router = useRouter();
   const emoji = CATEGORY_EMOJI[poll.category] ?? '🗳️';
   const tint = '#F3E8FF';
   return (
-    <TouchableOpacity style={styles.pollRow} activeOpacity={0.72}>
+    <TouchableOpacity
+      style={styles.pollRow}
+      activeOpacity={0.72}
+      onPress={() => router.push({ pathname: '/results', params: { pollId: poll.id } })}
+    >
       <View style={styles.pollRowLeft}>
         <View style={styles.pollRowBody}>
           <Text style={styles.pollQuestion} numberOfLines={2}>{poll.question}</Text>
@@ -92,26 +92,30 @@ function TabPlaceholder({ message }: { message: string }) {
 }
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
-const MY_USER_ID = 'u0';
-
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
+  const { userId, signOut, refreshUser } = useAuth();
   const [activeTab, setActiveTab] = useState<Tab>('Polls');
   const [user, setUser] = useState<UserProfile | null>(null);
   const [polls, setPolls] = useState<UserPollSummary[]>([]);
+  const [savedPolls, setSavedPolls] = useState<UserPollSummary[]>([]);
+  const [savedLoading, setSavedLoading] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editName, setEditName] = useState('');
   const [editBio, setEditBio] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
-  const loadProfile = useCallback(async () => {
+  const loadProfile = useCallback(async (refresh = false) => {
     try {
       setError(null);
+      if (refresh) setRefreshing(true);
+      else setLoading(true);
       const [userData, pollsData] = await Promise.all([
-        pollpopApi.getUser(MY_USER_ID),
-        pollpopApi.getUserPolls(MY_USER_ID),
+        pollpopApi.getUser(userId),
+        pollpopApi.getUserPolls(userId),
       ]);
       setUser(userData);
       setPolls(pollsData);
@@ -119,8 +123,28 @@ export default function ProfileScreen() {
       setError(err instanceof Error ? err.message : 'Could not load profile.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  }, []);
+  }, [userId]);
+
+  const loadSavedPolls = useCallback(async () => {
+    try {
+      setSavedLoading(true);
+      setSavedPolls(await pollpopApi.getSavedPolls(userId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load saved polls.');
+    } finally {
+      setSavedLoading(false);
+    }
+  }, [userId]);
+
+  const handleRefresh = useCallback(() => {
+    if (activeTab === 'Saved') {
+      void loadSavedPolls();
+    } else {
+      void loadProfile(true);
+    }
+  }, [activeTab, loadProfile, loadSavedPolls]);
 
   const openEditModal = useCallback(() => {
     if (user) {
@@ -134,8 +158,9 @@ export default function ProfileScreen() {
     if (!editName.trim()) return;
     setIsSaving(true);
     try {
-      await pollpopApi.updateUser(MY_USER_ID, editName.trim(), editBio.trim());
+      await pollpopApi.updateUser(userId, editName.trim(), editBio.trim());
       setUser((prev) => prev ? { ...prev, name: editName.trim(), bio: editBio.trim() } : null);
+      await refreshUser();
       setEditModalVisible(false);
     } catch (err) {
       console.error('Save failed:', err);
@@ -146,6 +171,10 @@ export default function ProfileScreen() {
 
   useEffect(() => { void loadProfile(); }, [loadProfile]);
 
+  useEffect(() => {
+    if (activeTab === 'Saved') void loadSavedPolls();
+  }, [activeTab, loadSavedPolls]);
+
   return (
     <View style={styles.root}>
       {/* ── Fixed Header ── */}
@@ -154,6 +183,7 @@ export default function ProfileScreen() {
         <TouchableOpacity
           style={styles.settingsBtn}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          onPress={() => void signOut()}
         >
           <Settings size={20} color={UI.color.subtle} strokeWidth={1.8} />
         </TouchableOpacity>
@@ -172,6 +202,13 @@ export default function ProfileScreen() {
           style={styles.scroll}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing || savedLoading}
+              onRefresh={handleRefresh}
+              tintColor={UI.color.purple}
+            />
+          }
         >
           {/* ── Profile Card ── */}
           {user && (
@@ -256,7 +293,22 @@ export default function ProfileScreen() {
             </View>
           )}
           {activeTab === 'Saved' && (
-            <TabPlaceholder message="Polls you've saved appear here." />
+            <View style={styles.pollList}>
+              {savedLoading && savedPolls.length === 0 ? (
+                <ActivityIndicator color={UI.color.purple} style={{ marginTop: 32 }} />
+              ) : savedPolls.length === 0 ? (
+                <TabPlaceholder message="Save polls from results to find them here." />
+              ) : (
+                <View style={styles.pollGroup}>
+                  {savedPolls.map((poll, idx) => (
+                    <React.Fragment key={poll.id}>
+                      <PollRow poll={poll} />
+                      {idx < savedPolls.length - 1 && <View style={styles.pollDivider} />}
+                    </React.Fragment>
+                  ))}
+                </View>
+              )}
+            </View>
           )}
         </ScrollView>
       )}
