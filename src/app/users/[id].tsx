@@ -172,15 +172,23 @@ export default function UserProfileScreen() {
                 <Text style={styles.statLabel}>Polls</Text>
               </View>
               <View style={styles.statSep} />
-              <View style={styles.statItem}>
+              <TouchableOpacity
+                style={styles.statItem}
+                activeOpacity={0.7}
+                onPress={() => router.push({ pathname: '/users/[id]/followers', params: { id } })}
+              >
                 <Text style={styles.statValue}>{user.followers}</Text>
                 <Text style={styles.statLabel}>Followers</Text>
-              </View>
+              </TouchableOpacity>
               <View style={styles.statSep} />
-              <View style={styles.statItem}>
+              <TouchableOpacity
+                style={styles.statItem}
+                activeOpacity={0.7}
+                onPress={() => router.push({ pathname: '/users/[id]/following', params: { id } })}
+              >
                 <Text style={styles.statValue}>{user.following}</Text>
                 <Text style={styles.statLabel}>Following</Text>
-              </View>
+              </TouchableOpacity>
             </View>
             <TouchableOpacity
               style={[styles.followBtn, following && styles.followingBtn]}

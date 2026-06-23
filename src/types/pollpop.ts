@@ -28,6 +28,7 @@ export interface Poll {
   comments: number;
   shares: number;
   isSaved?: boolean;
+  votedOptionId?: string | null;
 }
 
 export interface CreatorSummary {
@@ -36,6 +37,15 @@ export interface CreatorSummary {
   handle: string;
   avatar: string;
   polls: number;
+  isFollowing?: boolean;
+}
+
+export interface ConnectionUser {
+  id: string;
+  name: string;
+  handle: string;
+  avatar: string;
+  isCreator: boolean;
   isFollowing?: boolean;
 }
 

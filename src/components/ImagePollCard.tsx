@@ -21,6 +21,7 @@ export interface ImagePollOptionData {
 
 export interface ImagePollData {
   id: string;
+  votedOptionId?: string | null;
   creator: {
     id: string;
     name: string;
@@ -50,10 +51,16 @@ export default function ImagePollCard({ poll, onVote }: ImagePollCardProps) {
   const [alreadyVoted, setAlreadyVoted] = useState(false);
 
   useEffect(() => {
+    if (poll.votedOptionId) {
+      setSelected(poll.votedOptionId);
+      setHasVoted(true);
+      setAlreadyVoted(false);
+      return;
+    }
     setSelected(null);
     setHasVoted(false);
     setAlreadyVoted(false);
-  }, [poll.id]);
+  }, [poll.id, poll.votedOptionId]);
 
   const handleVote = async () => {
     if (!selected || !onVote || isVoting || hasVoted) return;

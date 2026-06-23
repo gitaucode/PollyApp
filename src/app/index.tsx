@@ -68,7 +68,11 @@ export default function HomeScreen() {
   const handleVote = useCallback(async (pollId: string, optionId: string) => {
     try {
       const { poll, accepted } = await pollpopApi.vote(pollId, optionId);
-      setPolls((current) => current.map((item) => (item.id === poll.id ? poll : item)));
+      const votedPoll = {
+        ...poll,
+        votedOptionId: accepted ? optionId : poll.votedOptionId ?? optionId,
+      };
+      setPolls((current) => current.map((item) => (item.id === poll.id ? votedPoll : item)));
       return { accepted };
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not submit your vote.');
@@ -149,6 +153,7 @@ export default function HomeScreen() {
             onVote={handleVote}
             poll={{
               id: poll.id,
+              votedOptionId: poll.votedOptionId,
               creator: {
                 id: poll.creator.id,
                 name: poll.creator.name,

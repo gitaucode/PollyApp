@@ -1,5 +1,5 @@
 import { getAccessToken, getSessionUserId } from '@/lib/auth-storage';
-import { Poll, PollFeedResponse } from '@/types/pollpop';
+import { Poll, PollFeedResponse, ConnectionUser } from '@/types/pollpop';
 
 const API_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://pollpop-api.stephen-gitau.workers.dev').replace(/\/$/, '');
 
@@ -192,6 +192,16 @@ export const pollpopApi = {
       body: JSON.stringify({ follow }),
     });
     return response.following;
+  },
+
+  getFollowers: async (userId: string) => {
+    const response = await request<{ users: ConnectionUser[] }>(`/users/${userId}/followers`);
+    return response.users;
+  },
+
+  getFollowing: async (userId: string) => {
+    const response = await request<{ users: ConnectionUser[] }>(`/users/${userId}/following`);
+    return response.users;
   },
 
   updateUser: async (userId: string, name: string, bio: string) => {

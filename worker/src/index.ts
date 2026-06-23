@@ -182,6 +182,65 @@ const timeAgo = (createdAt: string) => {
   return `${Math.floor(hours / 24)}d ago`;
 };
 
+async function resolveViewerId(env: Env, request: Request, queryUserId: string | null) {
+  const token = getBearerToken(request);
+  if (token) {
+    try {
+      const auth = await verifyToken(token, env.JWT_SECRET);
+      return auth.userId;
+    } catch {
+      // fall back to query param
+    }
+  }
+  return queryUserId;
+}
+
+async function getVotedOptionMap(env: Env, voterId: string, pollIds: string[]) {
+  if (!pollIds.length) return new Map<string, string>();
+  const rows = await env.DB.prepare(
+    `SELECT poll_id, option_id FROM votes WHERE voter_key = ? AND poll_id IN (${pollIds.map(() => '?').join(',')})`,
+  )
+    .bind(`user:${voterId}`, ...pollIds)
+    .all();
+  return new Map(rows.results.map((row) => [String(row.poll_id), String(row.option_id)]));
+}
+
+async function getVotedOptionId(env: Env, voterId: string, pollId: string) {
+  const row = await env.DB.prepare(
+    'SELECT option_id FROM votes WHERE voter_key = ? AND poll_id = ?',
+  )
+    .bind(`user:${voterId}`, pollId)
+    .first();
+  return row ? String(row.option_id) : null;
+}
+
+async function attachFollowingFlags(
+  env: Env,
+  request: Request,
+  users: { id: string; name: string; handle: string; avatar: string; isCreator: boolean }[],
+) {
+  const token = getBearerToken(request);
+  if (!token || users.length === 0) {
+    return users.map((user) => ({ ...user, isFollowing: false }));
+  }
+
+  try {
+    const auth = await verifyToken(token, env.JWT_SECRET);
+    const rows = await env.DB.prepare(
+      `SELECT following_id FROM follows WHERE follower_id = ? AND following_id IN (${users.map(() => '?').join(',')})`,
+    )
+      .bind(auth.userId, ...users.map((user) => user.id))
+      .all();
+    const followingSet = new Set(rows.results.map((row) => String(row.following_id)));
+    return users.map((user) => ({
+      ...user,
+      isFollowing: followingSet.has(String(user.id)),
+    }));
+  } catch {
+    return users.map((user) => ({ ...user, isFollowing: false }));
+  }
+}
+
 async function getPolls(env: Env, request: Request) {
   const url = new URL(request.url);
   const category = url.searchParams.get('category');
@@ -189,6 +248,7 @@ async function getPolls(env: Env, request: Request) {
   const mode = url.searchParams.get('mode');
   const viewerId = url.searchParams.get('userId');
   const limit = Math.min(Number(url.searchParams.get('limit') ?? 20), 50);
+  const resolvedViewerId = await resolveViewerId(env, request, viewerId);
 
   const where: string[] = [];
   const binds: unknown[] = [];
@@ -206,11 +266,11 @@ async function getPolls(env: Env, request: Request) {
     binds.push(`%${search}%`, `%${search}%`, `%${search}%`);
   }
   if (mode === 'following') {
-    if (!viewerId) {
+    if (!resolvedViewerId) {
       return json({ error: 'userId is required for following feed.' }, { status: 400 });
     }
     where.push('p.creator_id IN (SELECT following_id FROM follows WHERE follower_id = ?)');
-    binds.push(viewerId);
+    binds.push(resolvedViewerId);
   }
 
   const pollRows = await env.DB.prepare(
@@ -255,6 +315,8 @@ async function getPolls(env: Env, request: Request) {
     optionsByPoll.set(pollId, list);
   });
 
+  const voteMap = resolvedViewerId ? await getVotedOptionMap(env, resolvedViewerId, ids) : new Map<string, string>();
+
   const polls = pollRows.results.map((row) => ({
     id: row.id,
     question: row.question,
@@ -264,6 +326,7 @@ async function getPolls(env: Env, request: Request) {
     votes: Number(row.votes_count),
     comments: Number(row.comments_count),
     shares: Number(row.shares_count),
+    votedOptionId: voteMap.get(String(row.id)) ?? null,
     creator: {
       id: row.creator_id,
       name: row.creator_name,
@@ -291,11 +354,11 @@ async function getPolls(env: Env, request: Request) {
   ).all();
 
   let creatorResults = creators.results;
-  if (viewerId) {
+  if (resolvedViewerId) {
     const followRows = await env.DB.prepare(
       'SELECT following_id FROM follows WHERE follower_id = ?',
     )
-      .bind(viewerId)
+      .bind(resolvedViewerId)
       .all();
     const followingSet = new Set(followRows.results.map((row) => String(row.following_id)));
     creatorResults = creatorResults.map((creator) => ({
@@ -336,6 +399,7 @@ async function getPoll(env: Env, id: string, request?: Request) {
   const totalVotes = Number(row.votes_count);
 
   let isSaved = false;
+  let votedOptionId: string | null = null;
   if (request) {
     const token = getBearerToken(request);
     if (token) {
@@ -347,6 +411,7 @@ async function getPoll(env: Env, id: string, request?: Request) {
           .bind(auth.userId, id)
           .first();
         isSaved = Boolean(savedRow);
+        votedOptionId = await getVotedOptionId(env, auth.userId, id);
       } catch {
         // ignore invalid tokens for public poll reads
       }
@@ -364,6 +429,7 @@ async function getPoll(env: Env, id: string, request?: Request) {
       comments: Number(row.comments_count),
       shares: Number(row.shares_count),
       isSaved,
+      votedOptionId,
       creator: {
         id: row.creator_id,
         name: row.creator_name,
@@ -892,6 +958,48 @@ async function addComment(env: Env, request: Request, pollId: string) {
   });
 }
 
+async function listConnectionUsers(
+  env: Env,
+  request: Request,
+  userId: string,
+  mode: 'followers' | 'following',
+) {
+  const user = await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(userId).first();
+  if (!user) return notFound();
+
+  const rows = await env.DB.prepare(
+    mode === 'followers'
+      ? `SELECT u.id, u.name, u.handle, u.avatar_url AS avatar, u.is_creator AS isCreator
+         FROM follows f
+         JOIN users u ON u.id = f.follower_id
+         WHERE f.following_id = ?
+         ORDER BY f.created_at DESC
+         LIMIT 100`
+      : `SELECT u.id, u.name, u.handle, u.avatar_url AS avatar, u.is_creator AS isCreator
+         FROM follows f
+         JOIN users u ON u.id = f.following_id
+         WHERE f.follower_id = ?
+         ORDER BY f.created_at DESC
+         LIMIT 100`,
+  )
+    .bind(userId)
+    .all();
+
+  const users = await attachFollowingFlags(
+    env,
+    request,
+    rows.results.map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      handle: String(row.handle),
+      avatar: String(row.avatar),
+      isCreator: Boolean(row.isCreator),
+    })),
+  );
+
+  return json({ users });
+}
+
 export default {
   async fetch(request: Request, env: Env) {
     if (request.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
@@ -942,10 +1050,18 @@ export default {
       // User endpoints
       const userPollsMatch = path.match(/^\/users\/([^/]+)\/polls$/);
       const savedPollsMatch = path.match(/^\/users\/([^/]+)\/saved$/);
+      const followersMatch = path.match(/^\/users\/([^/]+)\/followers$/);
+      const followingMatch = path.match(/^\/users\/([^/]+)\/following$/);
       const userMatch = path.match(/^\/users\/([^/]+)$/);
       const activityMatch = path.match(/^\/activity\/([^/]+)$/);
       if (request.method === 'GET' && userPollsMatch) return getUserPolls(env, userPollsMatch[1]);
       if (request.method === 'GET' && savedPollsMatch) return getSavedPolls(env, request, savedPollsMatch[1]);
+      if (request.method === 'GET' && followersMatch) {
+        return listConnectionUsers(env, request, followersMatch[1], 'followers');
+      }
+      if (request.method === 'GET' && followingMatch) {
+        return listConnectionUsers(env, request, followingMatch[1], 'following');
+      }
       if (request.method === 'GET' && userMatch) return getUser(env, request, userMatch[1]);
       if (request.method === 'PATCH' && updateUserMatch) return updateUser(env, request, updateUserMatch[1]);
       if (request.method === 'GET' && activityMatch) return getActivity(env, request, activityMatch[1]);

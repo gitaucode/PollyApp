@@ -45,13 +45,31 @@ function ProfileAvatar({ uri }: { uri: string }) {
 }
 
 // ─── Stats Item ───────────────────────────────────────────────────────────────
-function StatItem({ value, label }: { value: string | number; label: string }) {
-  return (
-    <View style={styles.statItem}>
+function StatItem({
+  value,
+  label,
+  onPress,
+}: {
+  value: string | number;
+  label: string;
+  onPress?: () => void;
+}) {
+  const content = (
+    <>
       <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
-    </View>
+    </>
   );
+
+  if (onPress) {
+    return (
+      <TouchableOpacity style={styles.statItem} onPress={onPress} activeOpacity={0.7}>
+        {content}
+      </TouchableOpacity>
+    );
+  }
+
+  return <View style={styles.statItem}>{content}</View>;
 }
 
 // ─── Poll Row ─────────────────────────────────────────────────────────────────
@@ -94,6 +112,7 @@ function TabPlaceholder({ message }: { message: string }) {
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { userId, signOut, refreshUser } = useAuth();
   const [activeTab, setActiveTab] = useState<Tab>('Polls');
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -231,9 +250,17 @@ export default function ProfileScreen() {
               <View style={styles.statsRow}>
                 <StatItem value={user.polls} label="Polls" />
                 <View style={styles.statSep} />
-                <StatItem value={user.followers} label="Followers" />
+                <StatItem
+                  value={user.followers}
+                  label="Followers"
+                  onPress={() => router.push({ pathname: '/users/[id]/followers', params: { id: userId } })}
+                />
                 <View style={styles.statSep} />
-                <StatItem value={user.following} label="Following" />
+                <StatItem
+                  value={user.following}
+                  label="Following"
+                  onPress={() => router.push({ pathname: '/users/[id]/following', params: { id: userId } })}
+                />
               </View>
               <TouchableOpacity style={styles.editBtn} activeOpacity={0.8} onPress={openEditModal}>
                 <Text style={styles.editBtnText}>Edit profile</Text>

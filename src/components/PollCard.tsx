@@ -21,10 +21,16 @@ export default function PollCard({ poll, onVote }: PollCardProps) {
   const [alreadyVoted, setAlreadyVoted] = useState(false);
 
   React.useEffect(() => {
+    if (poll.votedOptionId) {
+      setSelectedOption(poll.votedOptionId);
+      setHasVoted(true);
+      setAlreadyVoted(false);
+      return;
+    }
     setSelectedOption(null);
     setHasVoted(false);
     setAlreadyVoted(false);
-  }, [poll.id]);
+  }, [poll.id, poll.votedOptionId]);
 
   const handleVote = async () => {
     if (!selectedOption || !onVote || isVoting || hasVoted) return;
