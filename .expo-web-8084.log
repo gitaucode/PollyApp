@@ -1,0 +1,9 @@
+Starting project at D:\01_Projects\Websites\Web Projects\LowKey
+Using src/app as the root directory for Expo Router.
+React Compiler enabled
+Starting Metro Bundler
+
+Waiting on http://localhost:8084
+Logs for your project will appear below.
+λ Bundled 14164ms node_modules\expo\node_modules\@expo\cli\node_modules\@expo\router-server\node\render.js (2712 modules)
+Web Bundled 15192ms node_modules\expo-router\entry.js (2659 modules)

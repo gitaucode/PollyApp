@@ -1,0 +1,339 @@
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  Image,
+  ScrollView,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+} from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Settings } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import BottomNav from '../components/BottomNav';
+import { UI } from '@/constants/theme';
+import { pollpopApi, UserProfile, UserPollSummary } from '@/lib/api';
+
+const PURPLE_DARK = UI.color.purpleDark;
+
+const TABS = ['Polls', 'Results', 'Saved'] as const;
+type Tab = (typeof TABS)[number];
+
+// ─── Profile Avatar ───────────────────────────────────────────────────────────
+function ProfileAvatar({ uri }: { uri: string }) {
+  return (
+    <View style={styles.avatarWrapper}>
+      <LinearGradient
+        colors={UI.gradient.avatar}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.avatarRingGradient}
+      >
+        <View style={styles.avatarInnerBorder}>
+          <Image source={{ uri }} style={styles.avatarImage} />
+        </View>
+      </LinearGradient>
+    </View>
+  );
+}
+
+// ─── Stats Item ───────────────────────────────────────────────────────────────
+function StatItem({ value, label }: { value: string | number; label: string }) {
+  return (
+    <View style={styles.statItem}>
+      <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
+    </View>
+  );
+}
+
+// ─── Category emoji helper ────────────────────────────────────────────────────
+const CATEGORY_EMOJI: Record<string, string> = {
+  spicy: '🌶️',
+  dating: '💜',
+  friendship: '🤝',
+  'hot-take': '🔥',
+  random: '😎',
+};
+
+// ─── Poll Row ─────────────────────────────────────────────────────────────────
+function PollRow({ poll }: { poll: UserPollSummary }) {
+  const emoji = CATEGORY_EMOJI[poll.category] ?? '🗳️';
+  const tint = '#F3E8FF';
+  return (
+    <TouchableOpacity style={styles.pollRow} activeOpacity={0.72}>
+      <View style={styles.pollRowLeft}>
+        <View style={styles.pollRowBody}>
+          <Text style={styles.pollQuestion} numberOfLines={2}>{poll.question}</Text>
+          <View style={styles.pollMeta}>
+            <Text style={styles.pollMetaText}>{poll.timeAgo}</Text>
+            <View style={styles.metaDot} />
+            <Text style={styles.pollMetaText}>{poll.votes} votes</Text>
+          </View>
+        </View>
+      </View>
+      <View style={[styles.emojiTile, { backgroundColor: tint }]}>
+        <Text style={styles.tileEmoji}>{emoji}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+// ─── Tab Placeholder ──────────────────────────────────────────────────────────
+function TabPlaceholder({ message }: { message: string }) {
+  return (
+    <View style={styles.tabPlaceholder}>
+      <Text style={styles.tabPlaceholderText}>{message}</Text>
+    </View>
+  );
+}
+
+// ─── Main Screen ──────────────────────────────────────────────────────────────
+const MY_USER_ID = 'u0';
+
+export default function ProfileScreen() {
+  const insets = useSafeAreaInsets();
+  const [activeTab, setActiveTab] = useState<Tab>('Polls');
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [polls, setPolls] = useState<UserPollSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadProfile = useCallback(async () => {
+    try {
+      setError(null);
+      const [userData, pollsData] = await Promise.all([
+        pollpopApi.getUser(MY_USER_ID),
+        pollpopApi.getUserPolls(MY_USER_ID),
+      ]);
+      setUser(userData);
+      setPolls(pollsData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load profile.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadProfile(); }, [loadProfile]);
+
+  return (
+    <View style={styles.root}>
+      {/* ── Fixed Header ── */}
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 16) }]}>
+        <Text style={styles.headerTitle}>Profile</Text>
+        <TouchableOpacity
+          style={styles.settingsBtn}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Settings size={20} color={UI.color.subtle} strokeWidth={1.8} />
+        </TouchableOpacity>
+      </View>
+
+      {loading ? (
+        <View style={styles.centered}>
+          <ActivityIndicator color={UI.color.purple} />
+        </View>
+      ) : error ? (
+        <View style={styles.centered}>
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      ) : (
+        <ScrollView
+          style={styles.scroll}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContent}
+        >
+          {/* ── Profile Card ── */}
+          {user && (
+            <View style={styles.profileCard}>
+              <LinearGradient
+                colors={['#F5F0FF', '#FAF7FF', 'transparent']}
+                start={{ x: 0.5, y: 0 }}
+                end={{ x: 0.5, y: 1 }}
+                style={styles.cardTopTint}
+                pointerEvents="none"
+              />
+              <View style={styles.identityRow}>
+                <ProfileAvatar uri={user.avatar} />
+                <View style={styles.identityText}>
+                  <Text style={styles.userName}>{user.name}</Text>
+                  <Text style={styles.userHandle}>{user.handle}</Text>
+                </View>
+              </View>
+              {!!user.bio && <Text style={styles.userBio}>{user.bio}</Text>}
+              <View style={styles.statsRow}>
+                <StatItem value={user.polls} label="Polls" />
+                <View style={styles.statSep} />
+                <StatItem value={user.followers} label="Followers" />
+                <View style={styles.statSep} />
+                <StatItem value={user.following} label="Following" />
+              </View>
+              <TouchableOpacity style={styles.editBtn} activeOpacity={0.8}>
+                <Text style={styles.editBtnText}>Edit profile</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* ── Tabs ── */}
+          <View style={styles.tabBar}>
+            {TABS.map((tab) => {
+              const isActive = activeTab === tab;
+              return (
+                <TouchableOpacity
+                  key={tab}
+                  style={styles.tabItem}
+                  onPress={() => setActiveTab(tab)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>{tab}</Text>
+                  {isActive && <View style={styles.tabUnderline} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {/* ── Tab Content ── */}
+          {activeTab === 'Polls' && (
+            <View style={styles.pollList}>
+              {polls.length === 0 ? (
+                <TabPlaceholder message="No polls yet. Create your first one!" />
+              ) : (
+                <View style={styles.pollGroup}>
+                  {polls.map((poll, idx) => (
+                    <React.Fragment key={poll.id}>
+                      <PollRow poll={poll} />
+                      {idx < polls.length - 1 && <View style={styles.pollDivider} />}
+                    </React.Fragment>
+                  ))}
+                </View>
+              )}
+            </View>
+          )}
+          {activeTab === 'Results' && (
+            <TabPlaceholder message="Your poll results will appear here after voting closes." />
+          )}
+          {activeTab === 'Saved' && (
+            <TabPlaceholder message="Polls you've saved appear here." />
+          )}
+        </ScrollView>
+      )}
+
+      <BottomNav activeTab="profile" />
+    </View>
+  );
+}
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: UI.color.white },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: UI.space.xl,
+    paddingBottom: UI.space.md,
+    backgroundColor: UI.color.white,
+  },
+  headerTitle: {
+    fontSize: UI.text.hero,
+    fontWeight: '700',
+    color: UI.color.black,
+    letterSpacing: 0,
+  },
+  settingsBtn: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60 },
+  errorText: { color: '#DC2626', fontSize: 14, fontWeight: '600', textAlign: 'center' },
+  scroll: { flex: 1 },
+  scrollContent: { paddingBottom: 108 },
+  profileCard: {
+    marginHorizontal: UI.space.lg,
+    marginTop: 4,
+    marginBottom: 12,
+    backgroundColor: UI.color.white,
+    borderRadius: UI.radius.xl,
+    padding: UI.space.xl,
+    overflow: 'hidden',
+    ...UI.shadow.card,
+    borderWidth: 1,
+    borderColor: '#F3F0FF',
+  },
+  cardTopTint: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0,
+    height: 80,
+    borderTopLeftRadius: UI.radius.xl,
+    borderTopRightRadius: UI.radius.xl,
+  },
+  identityRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  avatarWrapper: {},
+  avatarRingGradient: { borderRadius: 999, padding: 2.5 },
+  avatarInnerBorder: { backgroundColor: UI.color.white, borderRadius: 999, padding: 2 },
+  avatarImage: { width: 68, height: 68, borderRadius: 34, backgroundColor: UI.color.line },
+  identityText: { marginLeft: 14, flex: 1 },
+  userName: { fontSize: 22, fontWeight: '800', color: UI.color.black, letterSpacing: 0, lineHeight: 26 },
+  userHandle: { fontSize: 13, color: UI.color.subtle, fontWeight: '500', marginTop: 2 },
+  userBio: { fontSize: 13.5, color: '#4B5563', lineHeight: 20, marginBottom: 16, fontWeight: '400' },
+  statsRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
+  statItem: { flex: 1, alignItems: 'center' },
+  statValue: { fontSize: 18, fontWeight: '800', color: UI.color.black, letterSpacing: 0 },
+  statLabel: { fontSize: 11.5, color: UI.color.subtle, fontWeight: '500', marginTop: 1 },
+  statSep: { width: 1, height: 26, backgroundColor: '#F3F4F6', marginHorizontal: 4 },
+  editBtn: {
+    alignSelf: 'stretch',
+    borderRadius: UI.radius.pill,
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    backgroundColor: '#FAF5FF',
+    borderWidth: 1.5,
+    borderColor: '#DDD6FE',
+    alignItems: 'center',
+  },
+  editBtnText: { fontSize: 14, fontWeight: '600', color: PURPLE_DARK, letterSpacing: 0.1 },
+  tabBar: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+    paddingHorizontal: 16,
+  },
+  tabItem: { flex: 1, alignItems: 'center', paddingVertical: 12, position: 'relative' },
+  tabLabel: { fontSize: 14, fontWeight: '600', color: '#9CA3AF' },
+  tabLabelActive: { color: PURPLE_DARK },
+  tabUnderline: {
+    position: 'absolute', bottom: -1, left: '20%', right: '20%',
+    height: 2.5, backgroundColor: PURPLE_DARK, borderRadius: 99,
+  },
+  pollList: { paddingHorizontal: 16, paddingTop: 8 },
+  pollGroup: {
+    backgroundColor: '#FAFAFA',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#F3F0FF',
+    overflow: 'hidden',
+  },
+  pollRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  pollRowLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', marginRight: 12 },
+  pollRowBody: { flex: 1 },
+  pollQuestion: { fontSize: 14, fontWeight: '600', color: '#111827', lineHeight: 20, marginBottom: 5 },
+  pollMeta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  pollMetaText: { fontSize: 12, color: '#9CA3AF', fontWeight: '400' },
+  metaDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: '#D1D5DB' },
+  pollDivider: { height: 1, backgroundColor: '#EEEBF8', marginHorizontal: 16 },
+  emojiTile: {
+    width: 48, height: 48, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06, shadowRadius: 3, elevation: 1,
+  },
+  tileEmoji: { fontSize: 24 },
+  tabPlaceholder: { paddingHorizontal: 32, paddingTop: 52, alignItems: 'center' },
+  tabPlaceholderText: {
+    fontSize: 14, color: '#9CA3AF', textAlign: 'center', lineHeight: 21, fontWeight: '400',
+  },
+});

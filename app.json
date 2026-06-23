@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "LowKey",
-    "slug": "LowKey",
+    "name": "PollPop",
+    "slug": "PollPop",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "lowkey",
+    "scheme": "pollpop",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon"

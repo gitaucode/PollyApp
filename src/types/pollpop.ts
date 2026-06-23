@@ -1,0 +1,44 @@
+export interface User {
+  id: string;
+  name: string;
+  handle?: string;
+  avatar: string;
+  hasStory?: boolean;
+  isCreator?: boolean;
+}
+
+export interface PollOption {
+  id: string;
+  text: string;
+  emoji?: string;
+  imageUrl?: string | null;
+  votes?: number;
+  percentage?: number;
+}
+
+export interface Poll {
+  id: string;
+  creator: User;
+  question: string;
+  category: string;
+  anonymous: boolean;
+  timeAgo: string;
+  options: PollOption[];
+  votes: number;
+  comments: number;
+  shares: number;
+}
+
+export interface CreatorSummary {
+  id: string;
+  name: string;
+  handle: string;
+  avatar: string;
+  polls: number;
+}
+
+export interface PollFeedResponse {
+  polls: Poll[];
+  stories: User[];
+  creators: CreatorSummary[];
+}

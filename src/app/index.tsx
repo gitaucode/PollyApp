@@ -1,98 +1,179 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
-
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Bell } from 'lucide-react-native';
+import AvatarStory from '../components/AvatarStory';
+import CategoryTabs from '../components/CategoryTabs';
+import PollCard from '../components/PollCard';
+import ImagePollCard from '../components/ImagePollCard';
+import BottomNav from '../components/BottomNav';
+import { UI } from '@/constants/theme';
+import { pollpopApi } from '@/lib/api';
+import { Poll, User } from '@/types/pollpop';
 
 export default function HomeScreen() {
+  const insets = useSafeAreaInsets();
+  const [polls, setPolls] = useState<Poll[]>([]);
+  const [stories, setStories] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadFeed = useCallback(async () => {
+    try {
+      setError(null);
+      const feed = await pollpopApi.getFeed({ limit: 20 });
+      setPolls(feed.polls);
+      setStories(feed.stories);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load polls.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      void loadFeed();
+    }, 0);
+    return () => clearTimeout(timeout);
+  }, [loadFeed]);
+
+  const imagePolls = useMemo(
+    () => polls.filter((poll) => poll.options.length === 2 && poll.options.every((option) => option.imageUrl)),
+    [polls],
+  );
+  const textPolls = useMemo(
+    () => polls.filter((poll) => !imagePolls.some((imagePoll) => imagePoll.id === poll.id)),
+    [imagePolls, polls],
+  );
+
+  const handleVote = useCallback(async (pollId: string, optionId: string) => {
+    const { poll } = await pollpopApi.vote(pollId, optionId);
+    setPolls((current) => current.map((item) => (item.id === poll.id ? poll : item)));
+  }, []);
+
   return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
+    <View style={styles.root}>
+      {/* Fixed Header */}
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 14) }]}>
+        <Text style={styles.logoText}>PollPop</Text>
+        <TouchableOpacity style={styles.bellButton} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+        <Bell color={UI.color.ink} size={22} />
+        </TouchableOpacity>
+      </View>
 
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
+      {/* Scrollable Feed */}
+      <ScrollView
+        style={styles.scroll}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+        bounces
+      >
+        {/* Stories / Avatar Row */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.storiesScroll}
+          contentContainerStyle={styles.storiesContent}
+        >
+          <AvatarStory isAdd />
+          {stories.map((user) => (
+            <AvatarStory key={user.id} user={user} />
+          ))}
+        </ScrollView>
 
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
+        {/* Category Filter Tabs */}
+        <CategoryTabs />
+
+        {/* Poll Cards */}
+        {loading && <Text style={styles.stateText}>Loading polls...</Text>}
+        {error && <Text style={styles.stateText}>{error}</Text>}
+        {!loading && !error && polls.length === 0 && (
+          <Text style={styles.stateText}>No polls yet. Be the first to pop one.</Text>
+        )}
+        {imagePolls.map((poll) => (
+          <ImagePollCard
+            key={poll.id}
+            onVote={handleVote}
+            poll={{
+              id: poll.id,
+              creator: {
+                name: poll.creator.name,
+                avatar: poll.creator.avatar,
+                badge: poll.creator.isCreator ? 'pop' : undefined,
+                isCreator: poll.creator.isCreator,
+              },
+              question: poll.question,
+              timeAgo: poll.timeAgo,
+              options: [
+                {
+                  id: poll.options[0].id,
+                  label: poll.options[0].text,
+                  image: poll.options[0].imageUrl || '',
+                },
+                {
+                  id: poll.options[1].id,
+                  label: poll.options[1].text,
+                  image: poll.options[1].imageUrl || '',
+                },
+              ],
+              votes: poll.votes,
+              comments: poll.comments,
+              shares: poll.shares,
+            }}
           />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
+        ))}
+        {textPolls.map((poll) => (
+          <PollCard key={poll.id} poll={poll} onVote={handleVote} />
+        ))}
+      </ScrollView>
 
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
-    </ThemedView>
+      {/* Fixed Bottom Navigation */}
+      <BottomNav />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
-    justifyContent: 'center',
+    backgroundColor: UI.color.white,
+  },
+  header: {
     flexDirection: 'row',
-  },
-  safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
     alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
+    justifyContent: 'space-between',
+    paddingHorizontal: UI.space.xl,
+    paddingBottom: UI.space.md,
+    backgroundColor: UI.color.white,
   },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
+  logoText: {
+    fontSize: UI.text.hero,
+    fontWeight: '900',
+    color: UI.color.purple,
+    letterSpacing: 0,
+  },
+  bellButton: {
+    padding: 2,
+  },
+  scroll: {
     flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
   },
-  title: {
-    textAlign: 'center',
+  scrollContent: {
+    paddingBottom: 8,
   },
-  code: {
-    textTransform: 'uppercase',
+  stateText: {
+    paddingHorizontal: UI.space.xl,
+    paddingVertical: UI.space.lg,
+    color: UI.color.subtle,
+    fontSize: UI.text.body,
+    fontWeight: '600',
   },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
+  storiesScroll: {
+    flexGrow: 0,
+  },
+  storiesContent: {
+    paddingHorizontal: UI.space.lg,
+    paddingVertical: 2,
   },
 });

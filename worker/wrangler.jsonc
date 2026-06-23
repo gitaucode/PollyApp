@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pollpop-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-23",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pollpop",
+      "database_id": "e61c09da-6c4b-464c-ab31-31eaf2bfc8c6"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MEDIA",
+      "bucket_name": "pollpop-media"
+    }
+  ],
+  "vars": {
+    "PUBLIC_MEDIA_BASE_URL": ""
+  }
+}
