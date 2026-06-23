@@ -393,6 +393,25 @@ async function toggleFollow(env: Env, request: Request, creatorId: string) {
   return json({ following: body.follow ?? true });
 }
 
+async function updateUser(env: Env, request: Request, userId: string) {
+  const body = (await request.json()) as { name?: string; bio?: string };
+  if (!body.name) {
+    return json({ error: 'name is required.' }, { status: 400 });
+  }
+
+  const updated = await env.DB.prepare(
+    'UPDATE users SET name = ?, bio = ? WHERE id = ?',
+  )
+    .bind(body.name, body.bio || '', userId)
+    .run();
+
+  if (updated.meta.changes === 0) {
+    return json({ error: 'User not found.' }, { status: 404 });
+  }
+
+  return json({ success: true, name: body.name, bio: body.bio || '' });
+}
+
 export default {
   async fetch(request: Request, env: Env) {
     if (request.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
@@ -403,6 +422,7 @@ export default {
     const voteMatch = path.match(/^\/polls\/([^/]+)\/votes$/);
     const mediaMatch = path.match(/^\/media\/(.+)$/);
     const followMatch = path.match(/^\/users\/([^/]+)\/follow$/);
+    const updateUserMatch = path.match(/^\/users\/([^/]+)$/);
 
     try {
       if (request.method === 'GET' && path === '/health') {
@@ -436,6 +456,7 @@ export default {
       const activityMatch = path.match(/^\/activity\/([^/]+)$/);
       if (request.method === 'GET' && userPollsMatch) return getUserPolls(env, userPollsMatch[1]);
       if (request.method === 'GET' && userMatch) return getUser(env, userMatch[1]);
+      if (request.method === 'PATCH' && updateUserMatch) return updateUser(env, request, updateUserMatch[1]);
       if (request.method === 'GET' && activityMatch) return getActivity(env, activityMatch[1]);
       if (request.method === 'POST' && followMatch) return toggleFollow(env, request, followMatch[1]);
       return notFound();

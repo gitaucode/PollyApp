@@ -134,7 +134,7 @@ export default function ProfileScreen() {
     if (!editName.trim()) return;
     setIsSaving(true);
     try {
-      // For now, just update local state - backend endpoint would be added later
+      await pollpopApi.updateUser(MY_USER_ID, editName.trim(), editBio.trim());
       setUser((prev) => prev ? { ...prev, name: editName.trim(), bio: editBio.trim() } : null);
       setEditModalVisible(false);
     } catch (err) {

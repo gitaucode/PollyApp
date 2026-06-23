@@ -121,4 +121,12 @@ export const pollpopApi = {
     });
     return response.following;
   },
+
+  updateUser: async (userId: string, name: string, bio: string) => {
+    const response = await request<{ success: boolean; name: string; bio: string }>(`/users/${userId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name, bio }),
+    });
+    return response;
+  },
 };
